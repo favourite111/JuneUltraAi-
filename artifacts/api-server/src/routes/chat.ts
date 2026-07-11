@@ -70,7 +70,7 @@ const META_PATTERNS: Array<{ bucket: MetaBucket; pattern: RegExp }> = [
   { bucket: "devs", pattern: /\bwho('?s| is| are)?\s*(your|ur|the)?\s*(dev|devs|developer|developers|creator|creators|coder|coders)\b|\bwho\s+(made|create[sd]?|built|cod(?:e[sd]?|ing))\s+(you|u|june)\b/i },
   { bucket: "deploy", pattern: /\b(how (do|can|to) i?\s*)?(deploy|host|self.?host|set\s*up)\b.*\b(bot|june|this)\b/i },
   { bucket: "isAI", pattern: /\bare (you|u)\s+(an?\s+)?(ai|bot|robot|real|human)\b/i },
-  { bucket: "identity", pattern: /\b(who are (you|u)|what are (you|u)|tell me (more )?about (yourself|urself|u))\b/i },
+  { bucket: "identity", pattern: /\b(who are (you|u)|what are (you|u)(?!\s+(capable|able|doing|going|up\s+to|made\s+of|your))|tell me (more )?about (yourself|urself|u))\b/i },
 ];
 
 const META_REPLIES: Record<MetaBucket, string[]> = {
