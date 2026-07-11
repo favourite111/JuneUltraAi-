@@ -1,0 +1,98 @@
+Then I wouldn't stop the project just because of that. Since Shizo is the only API you have right now, I'd work around its limitations until you're ready to migrate.
+
+Here's what I'd do without changing providers:
+
+1. Automatically trim the history ⭐⭐⭐⭐⭐
+
+This is the biggest improvement.
+
+Before calling:
+
+const aiPrompt = buildPrompt(prompt, history, userId, groupId);
+
+don't pass the entire history. Instead, keep only the newest messages, for example:
+
+const recentHistory = history.slice(-6); // last 6 messages
+const aiPrompt = buildPrompt(prompt, recentHistory, userId, groupId);
+
+That alone can reduce the URL by thousands of characters.
+
+
+---
+
+2. Add a character limit ⭐⭐⭐⭐⭐
+
+Even if you keep the last 6 messages, one of them could be a huge block of code.
+
+Before sending to Shizo:
+
+if (aiPrompt.length > 1800) {
+    // remove more history
+}
+
+Keep trimming until it's under your chosen limit.
+
+
+---
+
+3. Shorten the system prompt ⭐⭐⭐⭐☆
+
+Your prompt is nearly 100 lines long.
+
+A lot of these can be removed:
+
+Emoji examples
+
+Savage slang examples
+
+Repeated rules
+
+Things the AI already understands
+
+
+You could probably cut it by 50–70% without noticeably changing its behavior.
+
+
+---
+
+4. Don't store extremely long user messages
+
+If someone pastes 500 lines of code, you don't necessarily need to save all of it in history.
+
+For example, save something like:
+
+<User sent a long code snippet>
+
+instead of the entire code block.
+
+
+---
+
+5. Reset conversations after inactivity
+
+You're already planning to clear history after 2 hours. That's a good idea. Keep it.
+
+
+---
+
+What I would NOT do
+
+I wouldn't keep sending 50, 100, or 200 messages to Shizo and hope it works. GET URLs simply aren't designed for that.
+
+
+---
+
+If I were maintaining JUNE ULTRA AI today
+
+Until you get access to a POST-based API, I'd use this strategy:
+
+✅ Shorter system prompt
+
+✅ Last 6–10 messages only
+
+✅ Maximum prompt length (auto-trim)
+
+✅ Reset after 2 hours (already planned)
+
+
+That should make Shizo much more reliable while you continue developing. Later, when you have access to a POST-based provider, you can swap it in without changing the rest of your bot.
