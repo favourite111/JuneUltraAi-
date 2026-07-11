@@ -1,0 +1,48 @@
+I want the chatbot to become more than just a conversational AI. Instead of only answering questions, I want it to act as a multi-purpose assistant by calling external tools/APIs whenever the user's request matches a supported feature.
+
+The idea is that the AI should first determine the user's intent. If the request matches one of the supported tools, it should execute that tool instead of generating a normal text response. If no suitable tool exists, it should continue with the normal AI conversation.
+
+These are the features I want to support initially:
+
+1. URL Shortener
+   
+   - Shorten long URLs into TinyURLs.
+   - API:
+     https://tinyurl.com/api-create.php?url=${encodeURIComponent(longUrl)}
+
+2. QR Code Generator
+   
+   - Generate QR codes from text or URLs.
+   - Uses the existing "qrcode" package ("^1.5.3"), so no external API is required.
+
+3. Text → PDF Converter
+   
+   - Convert user-provided text into a downloadable PDF document.
+
+4. Website Screenshot
+   
+   - Capture screenshots of websites.
+   - API:
+     https://eliteprotech-apis.zone.id/ssweb?url=${encodeURIComponent(url)}
+
+5. Reminder / Scheduler
+   
+   - Support requests such as:
+     - "Remind me in 30 minutes."
+     - "Remind me tomorrow at 8 PM."
+     - "Remind me to study at 6 PM."
+   - The reminder should be stored and delivered back to the user on WhatsApp at the scheduled time.
+
+For now, I don't want to write any implementation code. I want to focus on designing the architecture.
+
+I think the best approach is to introduce a lightweight tool-calling layer in front of the chatbot:
+
+- Receive the user's message.
+- Detect whether it matches one of the supported tools.
+- If it does, execute the corresponding tool/API.
+- Return the tool result to the user.
+- Otherwise, forward the message to the normal AI chat endpoint.
+
+I don't want the AI to simply describe what it would do. I want it to actually execute the requested action whenever a supported tool is available.
+
+I'd like us to discuss the best architecture for this system, how tool detection should work, how each tool should be registered, and how to make the design scalable so I can easily add more tools in the future without changing the chatbot logic.

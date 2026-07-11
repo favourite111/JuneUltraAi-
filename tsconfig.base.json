@@ -1,0 +1,18 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "skipLibCheck": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "composite": true,
+    "esModuleInterop": true,
+    "paths": {
+      "@workspace/api-zod": ["./lib/api-zod/src/index.ts"],
+      "@workspace/db": ["./lib/db/src/index.ts"]
+    }
+  }
+}

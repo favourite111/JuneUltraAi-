@@ -1,0 +1,1 @@
+- [esbuild + pdfkit runtime asset loading](esbuild-pdfkit-fonts.md) — pdfkit's standard fonts fail at runtime after esbuild bundling; must copy its `data/` dir into the output dir post-build.

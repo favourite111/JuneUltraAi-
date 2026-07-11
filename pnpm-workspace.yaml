@@ -1,0 +1,11 @@
+packages:
+  - "artifacts/*"
+  - "lib/*"
+
+catalog:
+  drizzle-orm: "^0.44.2"
+  "@types/node": "^24.0.0"
+
+onlyBuiltDependencies:
+  - esbuild
+  - argon2

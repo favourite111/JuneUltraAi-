@@ -1,0 +1,8 @@
+.git
+.agents
+attached_assets
+scripts
+artifacts/mockup-sandbox
+**/.tsbuildinfo
+**/node_modules/.cache
+**/*.log

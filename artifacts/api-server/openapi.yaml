@@ -1,0 +1,232 @@
+openapi: 3.0.3
+info:
+  title: JUNE_ULTRA_AI API
+  version: "1.0.0"
+  description: >
+    Chat API for the JUNE_ULTRA_AI persona. Supports multiple bots, each with
+    isolated conversation history for private (DM) and group chats.
+
+servers:
+  - url: https://your-server.koyeb.app
+
+components:
+  securitySchemes:
+    botAuth:
+      type: http
+      scheme: bearer
+      description: >
+        Bot API key. Must be sent alongside the X-Bot-Id header; the server
+        verifies both belong together.
+    adminAuth:
+      type: http
+      scheme: bearer
+      description: Admin key, separate from bot keys. Protects /v1/admin/*.
+
+  parameters:
+    XBotId:
+      name: X-Bot-Id
+      in: header
+      required: true
+      schema:
+        type: string
+      description: The bot's registered ID. Verified against the Authorization key.
+
+  schemas:
+    ChatRequest:
+      type: object
+      required: [prompt, userId]
+      properties:
+        prompt:
+          type: string
+          description: The message text.
+        userId:
+          type: string
+          description: Sender's stable ID (e.g. WhatsApp JID).
+          example: "2348012345678@s.whatsapp.net"
+        groupId:
+          type: string
+          nullable: true
+          description: Group ID for group chats. Omit for DMs.
+          example: "120363123456789@g.us"
+
+    ChatResponse:
+      type: object
+      properties:
+        success: { type: boolean, example: true }
+        reply: { type: string, example: "hey! 😊" }
+        model: { type: string, example: "JUNE_ULTRA_AI" }
+        conversationKey: { type: string, example: "june_bot::2348012345678@s.whatsapp.net" }
+
+    ErrorResponse:
+      type: object
+      properties:
+        success: { type: boolean, example: false }
+        error: { type: string }
+
+    Bot:
+      type: object
+      properties:
+        botId: { type: string }
+        owner: { type: string }
+        status: { type: string, enum: [active, suspended] }
+        createdAt: { type: string, format: date-time }
+        lastSeen: { type: string, format: date-time, nullable: true }
+
+    BotWithKey:
+      allOf:
+        - $ref: '#/components/schemas/Bot'
+        - type: object
+          properties:
+            apiKey:
+              type: string
+              description: Raw API key. Shown exactly once — never retrievable again.
+            warning:
+              type: string
+              example: "Save this key now — it will not be shown again."
+
+paths:
+  /api/healthz:
+    get:
+      summary: Health check
+      security: []
+      responses:
+        "200":
+          description: Server is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: ok }
+
+  /v1/chat:
+    post:
+      summary: Send a message to JUNE_ULTRA_AI
+      security: [{ botAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/XBotId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ChatRequest' }
+      responses:
+        "200":
+          description: Reply generated successfully
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChatResponse' }
+        "400": { description: Missing prompt or userId, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+        "401": { description: Invalid or mismatched apikey/botId, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+        "429": { description: Rate limit exceeded, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+        "502": { description: Upstream AI service unavailable, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+    get:
+      summary: Send a message to JUNE_ULTRA_AI (query params)
+      security: [{ botAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/XBotId'
+        - { name: prompt, in: query, required: true, schema: { type: string } }
+        - { name: userId, in: query, required: true, schema: { type: string } }
+        - { name: groupId, in: query, required: false, schema: { type: string } }
+      responses:
+        "200":
+          description: Reply generated successfully
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChatResponse' }
+    delete:
+      summary: Reset a conversation's history
+      security: [{ botAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/XBotId'
+        - { name: userId, in: query, required: true, schema: { type: string } }
+        - { name: groupId, in: query, required: false, schema: { type: string } }
+      responses:
+        "200":
+          description: Conversation reset
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  message: { type: string }
+                  conversationKey: { type: string }
+
+  /v1/admin/bots:
+    get:
+      summary: List all registered bots
+      security: [{ adminAuth: [] }]
+      responses:
+        "200":
+          description: List of bots
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  bots:
+                    type: array
+                    items: { $ref: '#/components/schemas/Bot' }
+    post:
+      summary: Register a new bot
+      security: [{ adminAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [botId, owner]
+              properties:
+                botId: { type: string, example: june_bot }
+                owner: { type: string, example: Impeccable }
+      responses:
+        "201":
+          description: Bot registered — raw key returned once
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BotWithKey' }
+        "409": { description: botId already exists }
+
+  /v1/admin/bots/{botId}:
+    patch:
+      summary: Update a bot's status (activate/suspend)
+      security: [{ adminAuth: [] }]
+      parameters:
+        - { name: botId, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string, enum: [active, suspended] }
+      responses:
+        "200": { description: Updated }
+        "404": { description: Bot not found }
+    delete:
+      summary: Delete a bot and all its conversations
+      security: [{ adminAuth: [] }]
+      parameters:
+        - { name: botId, in: path, required: true, schema: { type: string } }
+      responses:
+        "200": { description: Deleted }
+        "404": { description: Bot not found }
+
+  /v1/admin/bots/{botId}/regenerate-key:
+    post:
+      summary: Regenerate a bot's API key (invalidates the old one immediately)
+      security: [{ adminAuth: [] }]
+      parameters:
+        - { name: botId, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: New key issued — shown once
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BotWithKey' }
+        "404": { description: Bot not found }
