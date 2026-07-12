@@ -106,13 +106,26 @@ function buildPromptFitted(
   userId: string,
   groupId?: string,
 ): string {
+  // Check encoded length — Shizo receives the URL-encoded string, not the raw
+  // one. Emojis and non-ASCII chars expand significantly when encoded, so
+  // built.length alone is not a reliable safety check.
   for (let w = INITIAL_HISTORY_WINDOW; w >= 0; w -= 2) {
     const slice = w > 0 ? history.slice(-w) : [];
     const built = buildPrompt(userMessage, slice, userId, groupId);
-    if (built.length <= MAX_PROMPT_CHARS) return built;
+    if (encodeURIComponent(built).length <= MAX_PROMPT_CHARS) return built;
   }
-  // Absolute last resort — no history at all
-  return buildPrompt(userMessage, [], userId, groupId);
+
+  // Even with zero history the current prompt may still be too long (e.g. the
+  // user pasted thousands of characters). Trim the user message itself until
+  // it fits, preserving at least the first 100 chars so JUNE has something to
+  // respond to.
+  let bare = buildPrompt(userMessage, [], userId, groupId);
+  let trimmed = userMessage;
+  while (encodeURIComponent(bare).length > MAX_PROMPT_CHARS && trimmed.length > 100) {
+    trimmed = trimmed.slice(0, Math.floor(trimmed.length * 0.75));
+    bare = buildPrompt(trimmed + "… [trimmed]", [], userId, groupId);
+  }
+  return bare;
 }
 
 // ---------------------------------------------------------------------------
