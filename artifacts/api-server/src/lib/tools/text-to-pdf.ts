@@ -6,38 +6,30 @@ interface TextToPdfArgs {
   text: string;
 }
 
-// Deliberately only multi-word command phrases -- never a bare "pdf" --
-// so a message that merely mentions the word ("I like pdf files") never
-// matches. Every phrase pairs an action verb or clear intent with "pdf".
+// STRICT intent-based triggers only.
+//
+// Every phrase here requires either a demonstrative pronoun ("this" / "that")
+// pointing at specific content the user wants converted, or an explicit
+// personal request ("me a pdf"). Generic phrases like "text to pdf",
+// "convert to pdf", "create pdf", "generate pdf" are intentionally excluded
+// because they appear naturally in capability descriptions and feature lists
+// (e.g. JUNE's own reply: "I can do URL shortening, text to PDF, QR codes…")
+// and would fire the tool on any message that quotes or repeats that text.
 const TRIGGER_PHRASES = [
-  "convert to pdf",
   "convert this to pdf",
   "convert that to pdf",
   "convert this text to pdf",
   "convert that text to pdf",
-  "convert text to pdf",
   "make this a pdf",
   "make that a pdf",
   "make me a pdf",
   "make this into a pdf",
   "make that into a pdf",
-  "create a pdf",
-  "create pdf",
-  "generate a pdf",
-  "generate pdf",
   "turn this into a pdf",
   "turn that into a pdf",
   "turn this text into a pdf",
-  "turn text into a pdf",
-  "export to pdf",
-  "export as pdf",
-  "save as pdf",
-  "download as pdf",
   "pdf this",
   "pdf of this",
-  "text to pdf",
-  "write this as pdf",
-  "write as pdf",
   "put this in a pdf",
   "put this into a pdf",
 ] as const;
@@ -45,7 +37,7 @@ const TRIGGER_PHRASES = [
 // Removes the matched command phrase and common connector words, so
 // whatever's left is the actual content to put in the document.
 const STRIP_PATTERN =
-  /\b(convert|make|create|generate|turn|export|save|download|pdf)\b|\b(this|that|to|into|as|a|an|of|for|me|please|the)\b/gi;
+  /\b(convert|make|create|generate|turn|export|save|download|pdf|put)\b|\b(this|that|to|into|as|a|an|of|for|me|please|the|text)\b/gi;
 
 function match(text: string): TextToPdfArgs | null {
   if (!containsAnyPhrase(text, TRIGGER_PHRASES)) return null;
@@ -54,9 +46,8 @@ function match(text: string): TextToPdfArgs | null {
     .replace(STRIP_PATTERN, " ")
     .replace(/\s+/g, " ")
     .trim()
-    // Drop leftover leading/trailing punctuation from stripping words
-    // adjacent to a colon or dash (e.g. "convert to pdf: notes here").
     .replace(/^[:\-,.\s]+|[:\-,.\s]+$/g, "");
+
   if (!content) return null;
 
   return { text: content };

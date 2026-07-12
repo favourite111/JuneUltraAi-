@@ -5,28 +5,22 @@ interface UrlShortenerArgs {
   url: string;
 }
 
-// Every alias a user might reasonably use to ask for this tool. Matching
-// requires BOTH a phrase from this list AND an actual URL in the message
-// (see `match` below) — that combination is what keeps normal
-// conversation ("can you shorten your answer?") from false-triggering.
+// Matching requires BOTH a phrase from this list AND an actual URL in the
+// message — that double gate keeps false positives near zero. Loose phrases
+// like "make it shorter" or "trim the link" are excluded because they appear
+// in ordinary conversation unrelated to URLs.
 const TRIGGER_PHRASES = [
   "shorten",
   "shrink",
-  "trim this link",
-  "trim that link",
-  "trim url",
-  "trim the url",
-  "trim the link",
-  "make this link shorter",
-  "make that link shorter",
-  "make it shorter",
-  "make this url shorter",
-  "compress this link",
-  "compress url",
-  "compress the link",
-  "tinyurl",
   "short url",
   "short link",
+  "shorten url",
+  "shorten link",
+  "shorten this url",
+  "shorten that url",
+  "shorten this link",
+  "shorten that link",
+  "tinyurl",
 ] as const;
 
 function match(text: string): UrlShortenerArgs | null {

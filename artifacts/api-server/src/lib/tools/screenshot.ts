@@ -5,29 +5,24 @@ interface ScreenshotArgs {
   url: string;
 }
 
-// Requires a phrase from this list AND a URL (or bare domain) in the message,
-// so "screenshot" alone (no target) falls through to AI instead of erroring.
+// Requires BOTH a phrase from this list AND a URL/domain in the message.
+// Loose aliases like "snap a screenshot" or "web screenshot" are removed —
+// the double gate (phrase + URL) is the real safety net, but keeping the
+// phrase list tight avoids matching "I took a screenshot" or similar.
 const TRIGGER_PHRASES = [
+  "screenshot of",
   "screenshot",
-  "screen shot",
   "take a screenshot",
   "take screenshot",
-  "capture a screenshot",
   "capture screenshot",
-  "grab a screenshot",
   "grab screenshot",
-  "screenshot of",
-  "snap a screenshot",
-  "site screenshot",
-  "webpage screenshot",
-  "web screenshot",
   "screenshoot",   // common typo
 ] as const;
 
 /**
  * Accepts full URLs (https://...) first; falls back to bare domain patterns
- * like "google.com" and auto-prefixes with https://. Keeps false-positives
- * low by requiring at least one recognisable TLD.
+ * like "google.com" and auto-prefixes with https://. Requires a recognisable
+ * TLD to keep false-positives low.
  */
 const BARE_DOMAIN_RE =
   /\b(?:[a-z0-9](?:[a-z0-9\-]{0,61}[a-z0-9])?\.)+(?:com|org|net|io|co|app|dev|ai|me|tv|info|xyz|tech|gov|edu|uk|us|ca|ng|gh|za)\b/i;
@@ -64,9 +59,6 @@ async function execute(args: ScreenshotArgs): Promise<ToolResult> {
 
   const contentType = res.headers.get("content-type") ?? "";
 
-  // The upstream API's exact response shape is undocumented -- handle
-  // both "returns a hosted URL as JSON" and "returns raw image bytes"
-  // so this tool degrades gracefully either way.
   if (contentType.includes("application/json")) {
     const json = (await res.json()) as ScreenshotJsonResponse;
     const screenshotUrl = json.url ?? json.result ?? json.data?.url;

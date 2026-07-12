@@ -6,13 +6,14 @@ interface QrCodeArgs {
   text: string;
 }
 
-// "qr code" itself is distinctive enough on its own (not a phrase that
-// shows up in normal conversation), so no separate confirmation signal
-// (like requiring a URL) is needed the way the other tools need one.
+// "qr code" is distinctive enough to be safe on its own — it doesn't appear
+// in ordinary conversation the way "pdf" or "screenshot" can. Content must
+// be non-empty after stripping the trigger (enforced below) so "qr code"
+// alone (no payload) falls through to AI.
 const TRIGGER_PHRASES = ["qr code", "qrcode", "qr-code"] as const;
 
 // Strip the trigger phrase and connecting words, keep whatever's left as payload.
-const STRIP_PATTERN = /\bqr[\s-]?code\b|\b(generate|create|make|for|of|from|a|me|this)\b/gi;
+const STRIP_PATTERN = /\bqr[\s-]?code\b|\b(generate|create|make|for|of|from|a|me|this|that)\b/gi;
 
 function match(text: string): QrCodeArgs | null {
   if (!containsAnyPhrase(text, TRIGGER_PHRASES)) return null;
