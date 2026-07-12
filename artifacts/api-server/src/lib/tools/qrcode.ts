@@ -6,19 +6,49 @@ interface QrCodeArgs {
   text: string;
 }
 
-// "qr code" is distinctive enough to be safe on its own — it doesn't appear
-// in ordinary conversation the way "pdf" or "screenshot" can. Content must
-// be non-empty after stripping the trigger (enforced below) so "qr code"
-// alone (no payload) falls through to AI.
+// "qr code" alone is NOT distinctive enough — people mention QR codes in
+// ordinary conversation without asking for one to be generated ("I saw a QR
+// code on a billboard", "there's a QR code on the poster"). A prior version
+// fired on any such mention because non-empty leftover text after stripping
+// filler words was treated as intent, which false-triggered on passive,
+// past-tense observations.
+//
+// Requires a real request signal in addition to the phrase: either an
+// explicit action verb ("generate/create/make/need/want/give me/send me/
+// show me a qr code") or a "for"/":" clause directly attached to the phrase
+// naming what to encode ("qr code for https://x.com", "qr code: my text").
 const TRIGGER_PHRASES = ["qr code", "qrcode", "qr-code"] as const;
 
-// Strip the trigger phrase and connecting words, keep whatever's left as payload.
-const STRIP_PATTERN = /\bqr[\s-]?code\b|\b(generate|create|make|for|of|from|a|me|this|that)\b/gi;
+const ACTION_VERB_PHRASES = [
+  "generate",
+  "create",
+  "make",
+  "need",
+  "want",
+  "give me",
+  "send me",
+  "show me",
+] as const;
+
+const FOR_CLAUSE_PATTERN = /\bqr[\s-]?code\b\s*(for|:|-)\s*\S/i;
+
+// Strip the trigger phrase, action verbs, and connecting words, keep
+// whatever's left as payload.
+const STRIP_PATTERN =
+  /\bqr[\s-]?code\b|\b(can you|give me|send me|show me|generate|create|make|need|want|for|of|from|a|me|this|that)\b/gi;
 
 function match(text: string): QrCodeArgs | null {
   if (!containsAnyPhrase(text, TRIGGER_PHRASES)) return null;
 
-  const payload = text.replace(STRIP_PATTERN, " ").replace(/\s+/g, " ").trim();
+  const hasActionVerb = containsAnyPhrase(text, ACTION_VERB_PHRASES);
+  const hasForClause = FOR_CLAUSE_PATTERN.test(text);
+  if (!hasActionVerb && !hasForClause) return null;
+
+  const payload = text
+    .replace(STRIP_PATTERN, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/^[:\-,.\s]+|[:\-,.\s]+$/g, "");
   if (!payload) return null;
 
   return { text: payload };
