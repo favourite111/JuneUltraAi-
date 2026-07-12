@@ -133,6 +133,16 @@ globalThis.__dirname = __bannerPath.dirname(globalThis.__filename);
   if (pdfkitDataDir) {
     await cp(pdfkitDataDir, path.resolve(distDir, "data"), { recursive: true });
   }
+
+  // Copy static assets (mascot image, etc.) so express.static can serve them
+  // from dist/static at runtime — esbuild only bundles JS, not binary files.
+  const staticSrc = path.resolve(artifactDir, "static");
+  const staticDest = path.resolve(distDir, "static");
+  try {
+    await cp(staticSrc, staticDest, { recursive: true });
+  } catch {
+    // static/ folder may not exist in all environments; not fatal
+  }
 }
 
 buildAll().catch((err) => {
