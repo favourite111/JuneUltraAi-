@@ -19,20 +19,9 @@ const SHIZO_KEY = "shizo";
 // Limits
 // ---------------------------------------------------------------------------
 
-// Hard ceiling on what we send to Shizo. GET URLs choke above ~2000 chars
-// once URL-encoded — keep a comfortable margin below that.
 const MAX_PROMPT_CHARS = 1800;
-
-// Starting history window. Will shrink in steps of 2 if the prompt is still
-// too large after truncating individual messages.
 const INITIAL_HISTORY_WINDOW = 10;
-
-// Any single message longer than this in stored history gets summarised when
-// replaying — so one wall-of-text doesn't blow the whole budget.
 const MAX_MSG_REPLAY_CHARS = 300;
-
-// User messages longer than this are truncated before being saved to the DB.
-// Prevents huge pastes from polluting history forever.
 const MAX_STORED_USER_MSG_CHARS = 500;
 
 // ---------------------------------------------------------------------------
@@ -49,7 +38,6 @@ function buildPrompt(
     history.length > 0
       ? history
           .map((m) => {
-            // Long messages in history get trimmed so they don't eat the budget
             const content =
               m.content.length > MAX_MSG_REPLAY_CHARS
                 ? m.content.slice(0, MAX_MSG_REPLAY_CHARS) + "… [trimmed]"
@@ -97,7 +85,7 @@ JUNE:`.trim();
 
 // ---------------------------------------------------------------------------
 // Auto-fitting prompt builder
-// Shrinks the history window until the prompt fits under MAX_PROMPT_CHARS.
+// Shrinks the history window until the encoded prompt fits under MAX_PROMPT_CHARS.
 // ---------------------------------------------------------------------------
 
 function buildPromptFitted(
@@ -130,21 +118,11 @@ function buildPromptFitted(
 
 // ---------------------------------------------------------------------------
 // Hardcoded meta-question replies — never sent to the model.
-//
-// Deflects/answers for "who are you", "who made you", "give me your repo",
-// "how do I deploy you", "are you an AI" etc. These are answered the same
-// way every time on purpose: consistent in-character tone, and zero risk of
-// the model ever improvising a leak (real repo link, hosting details, tech
-// stack). "Repo" style questions point at the bot's own `.repo` command
-// instead of a hardcoded URL, so there's one source of truth for that link.
 // ---------------------------------------------------------------------------
 
 type MetaBucket = "repo" | "devs" | "deploy" | "isAI" | "identity";
 
 const META_PATTERNS: Array<{ bucket: MetaBucket; pattern: RegExp }> = [
-  // Checked in order — most specific first, so e.g. "who made you" doesn't
-  // fall through to the generic "who are you" bucket.
-  // Repo pattern: only fires on explicit requests, not casual mentions.
   {
     bucket: "repo",
     pattern:
@@ -160,7 +138,6 @@ const META_PATTERNS: Array<{ bucket: MetaBucket; pattern: RegExp }> = [
     pattern: /\b(how (do|can|to) i?\s*)?(deploy|host|self.?host|set\s*up)\b.*\b(bot|june|this)\b/i,
   },
   { bucket: "isAI", pattern: /\bare (you|u)\s+(an?\s+)?(ai|bot|robot|real|human)\b/i },
-  // Identity: "what are you capable of" must NOT match — negative lookahead on capability words.
   {
     bucket: "identity",
     pattern:
@@ -263,14 +240,9 @@ async function handleChat(req: Request, res: Response): Promise<void> {
     return;
   }
 
-  // botId is always the server-verified value set by the auth middleware
   const botId = req.botId;
   const convKey = buildConversationKey(botId, userId, groupId);
 
-  // ---------------------------------------------------------------------
-  // Tool routing — deterministic, checked before the AI is ever called.
-  // If a tool matches, it fully replaces the AI turn for this message.
-  // ---------------------------------------------------------------------
   const routed = routeTool(prompt);
   if (routed) {
     const ctx: ToolContext = { botId, userId, groupId };
@@ -314,11 +286,9 @@ async function handleChat(req: Request, res: Response): Promise<void> {
   if (metaReply) {
     reply = metaReply;
   } else {
-    // buildPromptFitted automatically trims history until the prompt fits
-    // under MAX_PROMPT_CHARS — prevents Shizo URL length timeouts.
     const aiPrompt = buildPromptFitted(prompt, history, userId, groupId);
 
-    const AI_TIMEOUT_MS = 18_000; // 18 s — well before the bot's 25 s axios limit
+    const AI_TIMEOUT_MS = 18_000;
     const controller = new AbortController();
     const aiTimer = setTimeout(() => controller.abort(), AI_TIMEOUT_MS);
 
@@ -370,8 +340,6 @@ async function handleChat(req: Request, res: Response): Promise<void> {
 
   const now = Math.floor(Date.now() / 1000);
 
-  // Truncate very long user messages before saving — no need to store a
-  // 500-line code paste in history forever.
   const storedPrompt =
     prompt.length > MAX_STORED_USER_MSG_CHARS
       ? prompt.slice(0, MAX_STORED_USER_MSG_CHARS) + "… [long message trimmed]"

@@ -68,6 +68,20 @@ export async function ensureSchema(): Promise<void> {
   await sql`CREATE INDEX IF NOT EXISTS idx_jobs_due ON jobs (status, due_at)`;
   await sql`CREATE INDEX IF NOT EXISTS idx_jobs_bot_id ON jobs (bot_id)`;
 
+  // User memory — objective personal facts (name, likes, etc.) per user per bot.
+  // Authority/identity claims are never stored here; that enforcement is in user-memory.ts.
+  await sql`
+    CREATE TABLE IF NOT EXISTS user_facts (
+      bot_id      TEXT NOT NULL,
+      user_id     TEXT NOT NULL,
+      fact_key    TEXT NOT NULL,
+      fact_value  TEXT NOT NULL,
+      updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (bot_id, user_id, fact_key)
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_facts_bot_user ON user_facts (bot_id, user_id)`;
+
   logger.info("Neon schema ready");
 
   startCleanupJob();
