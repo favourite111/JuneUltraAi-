@@ -3,9 +3,6 @@ import { urlShortenerTool } from "./url-shortener.js";
 import { qrCodeTool } from "./qrcode.js";
 import { screenshotTool } from "./screenshot.js";
 import { textToPdfTool } from "./text-to-pdf.js";
-import { reminderTool } from "./reminder.js";
-import { listRemindersTool } from "./list-reminders.js";
-import { deleteReminderTool } from "./delete-reminder.js";
 import { screenshotPromptTool } from "./screenshot-prompt.js";
 import { capabilitiesTool } from "./capabilities.js";
 
@@ -16,8 +13,8 @@ import { capabilitiesTool } from "./capabilities.js";
  * put the more specific/less ambiguous one first.
  *
  * Ordering rationale:
- * - Functional tools come first so actual requests (e.g. "remind me at 6pm",
- *   "screenshot of google.com") are always caught before the capabilities
+ * - Functional tools come first so actual requests (e.g. "screenshot of
+ *   google.com") are always caught before the capabilities
  *   meta-handler sees them.
  * - `capabilitiesTool` is last: it catches "what can you do?" style questions
  *   only after every real tool has had a chance to claim the message.
@@ -36,9 +33,6 @@ const registry: Tool[] = [
   screenshotTool,
   screenshotPromptTool, // fallback: screenshot intent but no URL → asks for one
   textToPdfTool,
-  reminderTool,
-  listRemindersTool,
-  deleteReminderTool,
   capabilitiesTool, // always last — catches capability queries after real tools
 ];
 

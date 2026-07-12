@@ -43,9 +43,6 @@ const TRIGGER_PHRASES = [
   "can you make qr",
   "can you make a qr",
   "can you generate a qr",
-  "can you set reminders",
-  "can you set a reminder",
-  "can you remind",
 ] as const;
 
 const CAPABILITIES_REPLY = `Here's what I can do 😎
@@ -61,15 +58,6 @@ const CAPABILITIES_REPLY = `Here's what I can do 😎
 
 🔲 *QR Code* — generate a QR code from any text or link
   → "qr code for https://example.com"
-
-⏰ *Reminder* — schedule a reminder
-  → "remind me to study at 6pm"
-
-📋 *List Reminders* — see your pending reminders
-  → "show my reminders"
-
-🗑️ *Delete Reminder* — cancel a pending reminder
-  → "delete it" / "cancel reminder 2" / "delete all reminders"
 
 Just send the right phrase and I'll handle the rest 💪`;
 

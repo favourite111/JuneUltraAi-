@@ -74,7 +74,6 @@ TOOLS (real, working — never say "I can't" for these):
 - Screenshot websites → "screenshot of [url]"
 - Text to PDF → "convert to pdf [text]"
 - QR code → "qr code for [text or url]"
-- Set reminder → "remind me to [x] at [time]"
 
 Conversation history:
 ${historyBlock}

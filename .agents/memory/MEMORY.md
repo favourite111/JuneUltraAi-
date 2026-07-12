@@ -1,1 +1,2 @@
 - [esbuild + pdfkit runtime asset loading](esbuild-pdfkit-fonts.md) — pdfkit's standard fonts fail at runtime after esbuild bundling; must copy its `data/` dir into the output dir post-build.
+- [Replit built-in Postgres uses sslmode=disable](replit-builtin-db-sslmode.md) — hardcoded ssl:"require" in imported DB clients breaks against Replit's DATABASE_URL; derive ssl from the connection string.

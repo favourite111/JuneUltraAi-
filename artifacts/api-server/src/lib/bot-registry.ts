@@ -11,7 +11,7 @@
 
 import { createHash } from "node:crypto";
 import { getSql } from "./db.js";
-import { generateApiKey, generateWebhookSecret, hashApiKey, verifyApiKeyHash } from "./crypto.js";
+import { generateApiKey, hashApiKey, verifyApiKeyHash } from "./crypto.js";
 import { logger } from "./logger.js";
 
 export interface Bot {
@@ -20,7 +20,6 @@ export interface Bot {
   status: "active" | "suspended";
   createdAt: Date;
   lastSeen: Date | null;
-  webhookUrl: string | null;
 }
 
 const VERIFY_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
@@ -97,9 +96,8 @@ export async function listBots(): Promise<Bot[]> {
       status: string;
       created_at: Date;
       last_seen: Date | null;
-      webhook_url: string | null;
     }[]
-  >`SELECT bot_id, owner, status, created_at, last_seen, webhook_url FROM bots ORDER BY created_at DESC`;
+  >`SELECT bot_id, owner, status, created_at, last_seen FROM bots ORDER BY created_at DESC`;
 
   return rows.map((r) => ({
     botId: r.bot_id,
@@ -107,66 +105,7 @@ export async function listBots(): Promise<Bot[]> {
     status: r.status as "active" | "suspended",
     createdAt: r.created_at,
     lastSeen: r.last_seen,
-    webhookUrl: r.webhook_url,
   }));
-}
-
-/**
- * Sets (or clears) a bot's webhook URL. A signing secret is generated the
- * first time a URL is configured and then kept stable across URL changes
- * (use `regenerateWebhookSecret` to rotate it deliberately). Returns null
- * if the bot doesn't exist.
- */
-export async function setBotWebhookUrl(
-  botId: string,
-  webhookUrl: string | null,
-): Promise<{ webhookUrl: string | null; webhookSecret: string | null } | null> {
-  const sql = getSql();
-
-  const existing = await sql<{ webhook_secret: string | null }[]>`
-    SELECT webhook_secret FROM bots WHERE bot_id = ${botId}
-  `;
-  if (existing.length === 0) return null;
-
-  let secret = existing[0]!.webhook_secret;
-  if (webhookUrl && !secret) {
-    secret = generateWebhookSecret();
-  }
-
-  const rows = await sql<{ webhook_url: string | null; webhook_secret: string | null }[]>`
-    UPDATE bots SET webhook_url = ${webhookUrl}, webhook_secret = ${secret}
-    WHERE bot_id = ${botId}
-    RETURNING webhook_url, webhook_secret
-  `;
-
-  if (rows.length === 0) return null;
-  return { webhookUrl: rows[0]!.webhook_url, webhookSecret: rows[0]!.webhook_secret };
-}
-
-/** Rotates the webhook signing secret. Returns null if the bot doesn't exist or has no webhook configured. */
-export async function regenerateWebhookSecret(botId: string): Promise<string | null> {
-  const sql = getSql();
-  const secret = generateWebhookSecret();
-  const result = await sql`
-    UPDATE bots SET webhook_secret = ${secret} WHERE bot_id = ${botId} AND webhook_url IS NOT NULL
-    RETURNING bot_id
-  `;
-  return result.length > 0 ? secret : null;
-}
-
-/** Looks up a bot's webhook delivery config. Returns null if unset (either field missing). */
-export async function getBotWebhookConfig(
-  botId: string,
-): Promise<{ webhookUrl: string; webhookSecret: string } | null> {
-  const sql = getSql();
-  const rows = await sql<{ webhook_url: string | null; webhook_secret: string | null }[]>`
-    SELECT webhook_url, webhook_secret FROM bots WHERE bot_id = ${botId}
-  `;
-  if (rows.length === 0) return null;
-
-  const { webhook_url, webhook_secret } = rows[0]!;
-  if (!webhook_url || !webhook_secret) return null;
-  return { webhookUrl: webhook_url, webhookSecret: webhook_secret };
 }
 
 /**
