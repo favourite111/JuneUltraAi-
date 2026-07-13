@@ -3,12 +3,15 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { build as esbuild } from "esbuild";
 import esbuildPluginPino from "esbuild-plugin-pino";
-import { rm, cp } from "node:fs/promises";
+import { rm, cp, readFile } from "node:fs/promises";
 
 // Plugins (e.g. 'esbuild-plugin-pino') may use `require` to resolve dependencies
 globalThis.require = createRequire(import.meta.url);
 
 const artifactDir = path.dirname(fileURLToPath(import.meta.url));
+
+// Read version from package.json at build time so it can be injected as a constant
+const pkg = JSON.parse(await readFile(path.resolve(artifactDir, "package.json"), "utf8"));
 
 async function buildAll() {
   const distDir = path.resolve(artifactDir, "dist");
@@ -101,6 +104,10 @@ async function buildAll() {
       "puppeteer-core",
       "electron",
     ],
+    // Inject version from package.json at build time — no runtime file I/O needed
+    define: {
+      __APP_VERSION__: JSON.stringify(pkg.version),
+    },
     sourcemap: "linked",
     plugins: [
       // pino relies on workers to handle logging, instead of externalizing it we use a plugin to handle it
