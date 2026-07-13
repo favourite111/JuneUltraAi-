@@ -174,9 +174,9 @@ app.get("/", (_req: Request, res: Response) => {
     /* title */
     h1 {
       font-family: 'Orbitron', sans-serif;
-      font-size: 2rem;
+      font-size: clamp(1.1rem, 5.5vw, 1.75rem);
       font-weight: 900;
-      letter-spacing: 2px;
+      letter-spacing: 1px;
       background: linear-gradient(135deg, var(--neon-purple) 0%, var(--neon-pink) 50%, var(--neon-cyan) 100%);
       -webkit-background-clip: text;
       -webkit-text-fill-color: transparent;
