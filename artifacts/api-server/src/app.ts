@@ -32,7 +32,9 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 // ── Request stats tracking middleware ─────────────────────────────────────────
+// Exclude /api/stats itself so the landing page polling doesn't inflate the count
 app.use((req: Request, res: Response, next: NextFunction) => {
+  if (req.path.startsWith("/api/stats")) { next(); return; }
   const start = Date.now();
   res.on("finish", () => stats.recordRequest(Date.now() - start));
   next();
