@@ -224,7 +224,8 @@ function cleanResponse(raw: string): string {
 // ---------------------------------------------------------------------------
 
 async function handleChat(req: Request, res: Response): Promise<void> {
-  const body = { ...req.query, ...(req.body as Record<string, unknown>) } as Record<string, string>;
+  // Body takes priority over query params — prevents silent overrides when both are sent
+  const body = { ...(req.body as Record<string, unknown>), ...req.query } as Record<string, string>;
 
   const prompt = body["prompt"]?.trim();
   const userId = body["userId"]?.trim();

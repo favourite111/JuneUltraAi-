@@ -32,7 +32,9 @@ router.post("/bots", async (req: Request, res: Response) => {
       res.status(409).json({ success: false, error: "botId already exists" });
       return;
     }
-    throw err;
+    // Explicit 500 instead of re-throwing — safe on Express 4 and 5
+    const message = err instanceof Error ? err.message : "Internal server error";
+    res.status(500).json({ success: false, error: message });
   }
 });
 
