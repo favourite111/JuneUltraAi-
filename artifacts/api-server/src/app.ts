@@ -27,13 +27,7 @@ app.use(
     },
   }),
 );
-// CORS — allow all origins (public bot API; tighten if needed via ALLOWED_ORIGINS env var)
-const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(",").map(o => o.trim());
-app.use(cors({
-  origin: allowedOrigins?.length ? allowedOrigins : true,
-  methods: ["GET", "POST", "DELETE", "PATCH"],
-  allowedHeaders: ["Content-Type", "Authorization", "X-Bot-Id", "X-Client-Ver"],
-}));
+app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
