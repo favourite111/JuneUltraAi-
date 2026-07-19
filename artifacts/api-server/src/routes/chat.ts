@@ -15,6 +15,14 @@ import {
   getFacts,
   formatFactsForPrompt,
 } from "../lib/user-memory.js";
+import {
+  getOpenTopics,
+  savePendingTopic,
+  closeTopic,
+  closeAllTopics,
+  classifyImportance,
+  type PendingTopic,
+} from "../lib/pending-topics.js";
 
 const router: IRouter = Router();
 
@@ -56,6 +64,7 @@ interface ConversationState {
   topics:            string[];   // all topics active in the last few messages
   lastQuestionAsked: string | null;
   recentBotPhrases:  string[]; // last 4 bot replies — used for anti-repetition
+  pendingTopics:     PendingTopic[]; // open unfinished threads from DB (Phase C consolidation)
 }
 
 const GREETING_RE = /\b(hi+|hey+|hello|sup|yo|howdy|hiya|good\s+(?:morning|afternoon|evening|night))\b/i;
@@ -204,22 +213,65 @@ function deriveConversationEnergy(currentPrompt: string): ConversationEnergy {
 // Personality temperature — how playful or reserved the bot should sound,
 // inferred from the user's own writing style in recent messages.
 // No stored preference needed — adapts session by session.
+//
+// Multi-signal weighted scoring (replaces the old single emoji-ratio threshold):
+//   +4  emoji density > 10%
+//   +3  emoji density 5–10%
+//   +1  emoji density 2–5%
+//   -2  emoji density < 0.5%  (almost none)
+//   +2  per slang token (capped at +6)
+//   +1/+2  heavy punctuation (!!!, ???, ...)
+//   +1/+3  ALL-CAPS words
+//   +1  avg message < 15 chars (ultra-short = casual texting)
+//   -1  avg message > 120 chars (long-form = more formal)
+//   -3  per formal word (however, therefore, …)
 // ---------------------------------------------------------------------------
-const PLAYFUL_SIGNALS_RE = /lmao+|omo|bruh|sheesh|no\s*way|bro+|bestie|sis|fam|💀|🔥{2,}|😂{2,}|[A-Z]{4,}|(.)\1{3,}/iu;
+const SLANG_RE  = /\b(lmao+|lol+|omo|bruh+|sheesh|no\s*way|bestie|sis|fam|fr(?:\s+fr)?|ong|ngl|bussin|lowkey|highkey|slay|periodt|bet|mid|sus|cap|rizz)\b/iu;
+const FORMAL_RE = /\b(however|therefore|furthermore|regarding|sincerely|accordingly|consequently|nevertheless|henceforth|whereby)\b/i;
 
 function derivePersonalityTemp(history: Message[], currentPrompt: string): PersonalityTemp {
   const recentUserMsgs = [
     ...history.filter(m => m.role === "user").slice(-6).map(m => m.content),
     currentPrompt,
   ];
-  const combined    = recentUserMsgs.join(" ");
-  const emojiCount  = (combined.match(/\p{Emoji}/gu) ?? []).length;
-  const emojiRatio  = emojiCount / Math.max(combined.replace(/\s/g, "").length, 1);
+  const combined     = recentUserMsgs.join(" ");
+  const nonSpaceLen  = Math.max(combined.replace(/\s/g, "").length, 1);
 
-  // Playful: high emoji density OR clear slang/caps signals
-  if (emojiRatio > 0.07 || PLAYFUL_SIGNALS_RE.test(combined)) return "playful";
-  // Reserved: almost no emojis, no slang
-  if (emojiRatio < 0.01 && !PLAYFUL_SIGNALS_RE.test(combined)) return "reserved";
+  let score = 0;
+
+  // Signal 1: Emoji density
+  const emojiCount = (combined.match(/\p{Emoji}/gu) ?? []).length;
+  const emojiRatio = emojiCount / nonSpaceLen;
+  if      (emojiRatio > 0.10) score += 4;
+  else if (emojiRatio > 0.05) score += 3;
+  else if (emojiRatio > 0.02) score += 1;
+  else if (emojiRatio < 0.005) score -= 2;
+
+  // Signal 2: Slang vocabulary
+  const slangMatches = (combined.match(SLANG_RE) ?? []).length;
+  score += Math.min(slangMatches * 2, 6);
+
+  // Signal 3: Heavy punctuation (!!!, ???, repeated dots)
+  const heavyPunct = (combined.match(/[!?]{2,}|\.{3,}/g) ?? []).length;
+  if      (heavyPunct >= 3) score += 2;
+  else if (heavyPunct >= 1) score += 1;
+
+  // Signal 4: ALL-CAPS words (shouting / high energy)
+  const capsWords = (combined.match(/\b[A-Z]{3,}\b/g) ?? []).length;
+  if      (capsWords >= 3) score += 3;
+  else if (capsWords >= 1) score += 1;
+
+  // Signal 5: Average message length — very short = casual texting style
+  const avgLen = recentUserMsgs.reduce((s, m) => s + m.length, 0) / recentUserMsgs.length;
+  if      (avgLen < 15)  score += 1;
+  else if (avgLen > 120) score -= 1;
+
+  // Signal 6: Formal vocabulary — strong reserved indicator
+  const formalCount = (combined.match(FORMAL_RE) ?? []).length;
+  score -= formalCount * 3;
+
+  if (score >= 4)  return "playful";
+  if (score <= -2) return "reserved";
   return "balanced";
 }
 
@@ -286,7 +338,19 @@ function deriveConversationState(history: Message[], currentPrompt: string): Con
     topics:             deriveTopics(history, currentPrompt),
     lastQuestionAsked:  deriveLastQuestion(history),
     recentBotPhrases,
+    pendingTopics:      [], // populated from DB in handleChat before prompt build
   };
+}
+
+// ---------------------------------------------------------------------------
+// Topic text — builds a short summary of the user's unfinished story to store
+// as a pending topic when June responds with curiosity.
+// ---------------------------------------------------------------------------
+
+function buildTopicText(prompt: string, topics: string[]): string {
+  const tag     = topics.length > 0 ? `[${topics[0]!}] ` : "";
+  const excerpt = prompt.replace(/\s+/g, " ").trim().slice(0, 80);
+  return (tag + excerpt).slice(0, 120);
 }
 
 // ---------------------------------------------------------------------------
@@ -365,6 +429,19 @@ function buildPrompt(
   }
   if (state.lastQuestionAsked) {
     stateLines.push(`You last asked: "${state.lastQuestionAsked}" — if they answer it, connect your reply to it.`);
+  }
+
+  // Pending threads — only surface them when the user isn't already focused on something urgent
+  const INTENT_NO_INJECT = new Set<UserIntent>(["asking_question", "requesting_help", "coding", "venting"]);
+  if (state.pendingTopics.length > 0 && !INTENT_NO_INJECT.has(state.userIntent)) {
+    const topicLines = state.pendingTopics.map((t) => {
+      const ageMin   = Math.round((Date.now() - t.createdAt.getTime()) / 60_000);
+      const ageLabel = ageMin < 60 ? `${ageMin}m ago` : `${Math.round(ageMin / 60)}h ago`;
+      return `  · [${t.importance}] "${t.topicText}" (${ageLabel})`;
+    }).join("\n");
+    stateLines.push(
+      `Open threads — you asked about these; bring one up naturally if the moment allows:\n${topicLines}`,
+    );
   }
 
   const stateBlock = stateLines.join("\n");
@@ -676,9 +753,10 @@ async function handleChat(req: Request, res: Response): Promise<void> {
     return;
   }
 
-  const [rawHistory, facts] = await Promise.all([
+  const [rawHistory, facts, openTopics] = await Promise.all([
     getHistory(convKey),
     getFacts(botId, userId),
+    getOpenTopics(botId, userId),
   ]);
 
   // Sanitize history messages loaded from the DB — they may have been stored
@@ -690,9 +768,20 @@ async function handleChat(req: Request, res: Response): Promise<void> {
     content: stripSurrogates(m.content),
   }));
 
-  // Derive conversation state from existing history — no extra storage needed
-  const state     = deriveConversationState(history, prompt);
+  // Derive conversation state from existing history, then merge DB-sourced pending topics
+  // into the single ConversationState object (Phase C consolidation).
+  const derivedState = deriveConversationState(history, prompt);
+  const state: ConversationState = { ...derivedState, pendingTopics: openTopics };
   const factsLine = formatFactsForPrompt(facts);
+
+  // Auto-close: if the user is now telling the story they started < 2h ago, mark it done.
+  if (state.userIntent === "telling_story" && openTopics.length > 0) {
+    const TWO_HOURS = 2 * 60 * 60 * 1000;
+    const recentTopic = openTopics.find(
+      (t) => Date.now() - t.createdAt.getTime() < TWO_HOURS,
+    );
+    if (recentTopic) void closeTopic(recentTopic.id);
+  }
 
   let reply: string;
   const metaReply = matchMetaReply(prompt);
@@ -769,6 +858,17 @@ async function handleChat(req: Request, res: Response): Promise<void> {
   const newFacts = extractFacts(prompt);
   if (newFacts.length > 0) void saveFacts(botId, userId, newFacts);
 
+  // Curiosity Memory: when June responds with curiosity, the user opened a thread
+  // they haven't finished yet — save it so June can naturally bring it back up later.
+  if (state.responseStyle === "curious") {
+    const topicText  = buildTopicText(prompt, state.topics);
+    const importance = classifyImportance(prompt);
+    // Pass the topic category as topicKey for deduplication — repeated messages
+    // about the same topic (exams, crush, etc.) update one row instead of stacking.
+    const topicKey   = state.topics[0] ?? null;
+    void savePendingTopic(botId, userId, topicText, importance, topicKey);
+  }
+
   res.json({
     success: true,
     handledBy: "ai",
@@ -796,7 +896,10 @@ router.delete("/", requireApiKey, async (req: Request, res: Response) => {
   }
 
   const convKey = buildConversationKey(req.botId, userId, groupId);
-  await resetConversation(convKey);
+  await Promise.all([
+    resetConversation(convKey),
+    closeAllTopics(req.botId, userId),
+  ]);
   res.json({ success: true, message: "Conversation reset", conversationKey: convKey });
 });
 

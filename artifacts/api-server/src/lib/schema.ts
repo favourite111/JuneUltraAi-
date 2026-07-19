@@ -1,6 +1,7 @@
 import { getSql } from "./db.js";
 import { logger } from "./logger.js";
 import { startCleanupJob } from "./conversation-store.js";
+import { startTopicCleanupJob } from "./pending-topics.js";
 
 /**
  * Creates the bots + conversations tables if they don't exist, and starts
@@ -51,7 +52,32 @@ export async function ensureSchema(): Promise<void> {
   `;
   await sql`CREATE INDEX IF NOT EXISTS idx_facts_bot_user ON user_facts (bot_id, user_id)`;
 
+  // Pending topics — unfinished conversational threads that June should follow up on.
+  // Saved when June responds with curiosity (user starts a story); closed when the
+  // user actually tells the story or the conversation is reset.
+  await sql`
+    CREATE TABLE IF NOT EXISTS pending_topics (
+      id           BIGSERIAL PRIMARY KEY,
+      bot_id       TEXT NOT NULL,
+      user_id      TEXT NOT NULL,
+      topic_text   TEXT NOT NULL,
+      topic_key    TEXT,
+      importance   TEXT NOT NULL DEFAULT 'low',
+      status       TEXT NOT NULL DEFAULT 'open',
+      created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      closed_at    TIMESTAMPTZ
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_topics_bot_user_status ON pending_topics (bot_id, user_id, status)`;
+
+  // Migrate existing pending_topics rows that predate topic_key / updated_at columns.
+  // ADD COLUMN IF NOT EXISTS is a no-op on fresh installs; safe to run every boot.
+  await sql`ALTER TABLE pending_topics ADD COLUMN IF NOT EXISTS topic_key  TEXT`;
+  await sql`ALTER TABLE pending_topics ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`;
+
   logger.info("Neon schema ready");
 
   startCleanupJob();
+  startTopicCleanupJob();
 }
