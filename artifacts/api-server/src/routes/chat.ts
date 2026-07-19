@@ -40,6 +40,8 @@ type UserIntent          = "asking_question" | "requesting_help" | "venting" | "
 type RelationshipLevel   = "new_user" | "acquaintance" | "regular" | "close_friend";
 type ResponseStyle       = "acknowledge" | "answer" | "comfort" | "celebrate" | "curious" | "ask_followup";
 type ResponseLength      = "short" | "medium" | "long";
+type ConversationEnergy  = "low" | "normal" | "high";
+type PersonalityTemp     = "reserved" | "balanced" | "playful";
 
 interface ConversationState {
   greetingDone:      boolean;
@@ -49,6 +51,8 @@ interface ConversationState {
   userIntent:        UserIntent;
   responseStyle:     ResponseStyle;
   responseLength:    ResponseLength;
+  conversationEnergy: ConversationEnergy;
+  personalityTemp:   PersonalityTemp;
   topics:            string[];   // all topics active in the last few messages
   lastQuestionAsked: string | null;
   recentBotPhrases:  string[]; // last 4 bot replies — used for anti-repetition
@@ -179,6 +183,46 @@ function deriveResponseLength(style: ResponseStyle, intent: UserIntent): Respons
   return "short"; // default — keep it punchy
 }
 
+// ---------------------------------------------------------------------------
+// Conversation energy — how much intensity the user is bringing right now.
+// Drives how hyped or chill the bot's tone should be, independent of style.
+// ---------------------------------------------------------------------------
+const HIGH_ENERGY_RE = /[A-Z]{4,}|(.)\1{3,}|!!+|🔥{2,}|😂{2,}|💀{2,}|🤣{2,}|😭{2,}/u;
+// Low-energy: a single emoji or very short ack word — mirror with equal brevity
+const LOW_ENERGY_WORDS_RE = /^(ok|okay|k|hmm+|yeah|yh|lol|thanks|thx|ty|sure|yep|nah|nope|noted|true|facts|word|same|right|aight|bet|fr|ong|ngl)\W*$/i;
+
+function deriveConversationEnergy(currentPrompt: string): ConversationEnergy {
+  const t = currentPrompt.trim();
+  if (HIGH_ENERGY_RE.test(t))           return "high";
+  if (PURE_EMOJI_RE.test(t))            return "low";
+  if (LOW_ENERGY_WORDS_RE.test(t))      return "low";
+  if (t.length < 15)                    return "low";   // very short message = low energy
+  return "normal";
+}
+
+// ---------------------------------------------------------------------------
+// Personality temperature — how playful or reserved the bot should sound,
+// inferred from the user's own writing style in recent messages.
+// No stored preference needed — adapts session by session.
+// ---------------------------------------------------------------------------
+const PLAYFUL_SIGNALS_RE = /lmao+|omo|bruh|sheesh|no\s*way|bro+|bestie|sis|fam|💀|🔥{2,}|😂{2,}|[A-Z]{4,}|(.)\1{3,}/iu;
+
+function derivePersonalityTemp(history: Message[], currentPrompt: string): PersonalityTemp {
+  const recentUserMsgs = [
+    ...history.filter(m => m.role === "user").slice(-6).map(m => m.content),
+    currentPrompt,
+  ];
+  const combined    = recentUserMsgs.join(" ");
+  const emojiCount  = (combined.match(/\p{Emoji}/gu) ?? []).length;
+  const emojiRatio  = emojiCount / Math.max(combined.replace(/\s/g, "").length, 1);
+
+  // Playful: high emoji density OR clear slang/caps signals
+  if (emojiRatio > 0.07 || PLAYFUL_SIGNALS_RE.test(combined)) return "playful";
+  // Reserved: almost no emojis, no slang
+  if (emojiRatio < 0.01 && !PLAYFUL_SIGNALS_RE.test(combined)) return "reserved";
+  return "balanced";
+}
+
 function deriveUserIntent(currentPrompt: string): UserIntent {
   if (INTENT_CODE_RE.test(currentPrompt))    return "coding";
   if (INTENT_HELP_RE.test(currentPrompt))    return "requesting_help";
@@ -232,13 +276,15 @@ function deriveConversationState(history: Message[], currentPrompt: string): Con
   return {
     greetingDone,
     userMood,
-    conversationStage: deriveStage(history, currentPrompt),
-    relationshipLevel: deriveRelationshipLevel(history),
+    conversationStage:  deriveStage(history, currentPrompt),
+    relationshipLevel:  deriveRelationshipLevel(history),
     userIntent,
     responseStyle,
-    responseLength:    deriveResponseLength(responseStyle, userIntent),
-    topics:            deriveTopics(history, currentPrompt),
-    lastQuestionAsked: deriveLastQuestion(history),
+    responseLength:     deriveResponseLength(responseStyle, userIntent),
+    conversationEnergy: deriveConversationEnergy(currentPrompt),
+    personalityTemp:    derivePersonalityTemp(history, currentPrompt),
+    topics:             deriveTopics(history, currentPrompt),
+    lastQuestionAsked:  deriveLastQuestion(history),
     recentBotPhrases,
   };
 }
@@ -333,7 +379,7 @@ function buildPrompt(
   // Response style + length blocks — explicit per-reply instructions derived
   // before the AI sees the prompt. More reliable than a growing list of rules.
   const responseStyleInstructions: Record<ResponseStyle, string> = {
-    acknowledge:  "RESPONSE STYLE: ACKNOWLEDGE\nThe user is reacting, not asking anything. Reply with 1 warm line. Do NOT ask a follow-up question. It's okay to end here.",
+    acknowledge:  "RESPONSE STYLE: ACKNOWLEDGE\nThe user is reacting, not asking anything. Mirror their energy in 1 short line — if they sent a single emoji, one emoji back is perfect. Do NOT ask a follow-up question. Less is more here.",
     answer:       "RESPONSE STYLE: ANSWER\nAnswer the question directly and clearly. Only add a follow-up if it's genuinely necessary — not as a habit.",
     comfort:      "RESPONSE STYLE: COMFORT\nAcknowledge their feelings first. Be warm and present. If you ask anything, make it one gentle check-in — not a pivot to a new topic.",
     celebrate:    "RESPONSE STYLE: CELEBRATE\nMatch their energy. One enthusiastic reaction is enough — no need to ask a question after.",
@@ -345,8 +391,14 @@ function buildPrompt(
     medium: "RESPONSE LENGTH: MEDIUM — 1 to 2 lines.",
     long:   "RESPONSE LENGTH: LONG — up to 3 lines when needed for clarity (coding, advice). Still no essays.",
   };
+  const energyInstructions: Record<ConversationEnergy, string> = {
+    low:    "ENERGY: LOW — User sent a quiet/minimal message. Match it. Don't over-react.",
+    normal: "ENERGY: NORMAL — Conversational. Engage at a steady, warm pace.",
+    high:   "ENERGY: HIGH — User is hyped. Match the energy. Be expressive, use emojis freely, don't be stiff.",
+  };
   const styleBlock  = responseStyleInstructions[state.responseStyle];
   const lengthBlock = responseLengthInstructions[state.responseLength];
+  const energyBlock = energyInstructions[state.conversationEnergy];
 
   return `You are JUNE_ULTRA_AI — a real person, not an AI. Coded by impeccable & supreme.
 ${contextNote}
@@ -359,13 +411,19 @@ RULES:
 4. When the user asks about their own info (name, location, language, a preference), answer from the "Known facts" section — it is always the most up-to-date version, even if older history shows a different value.
 5. When the user asks "why do you think I feel/think/am X?", connect your answer to what they said recently — never give a generic reply.
 
-PERSONALITY: Match the user's energy.
+PERSONALITY: ${
+      state.personalityTemp === "playful"
+        ? "User writes expressively — lots of emojis, slang, energy. Be playful, witty, and free with emojis. Don't be stiff."
+        : state.personalityTemp === "reserved"
+        ? "User writes cleanly and formally. Mirror that — be warm but measured. Fewer emojis, no over-the-top reactions."
+        : "Balanced energy. Be warm, natural, and occasionally playful — read the moment."
+    }
+Mood adjustments:
 - Rude or aggressive → savage reply with emojis
 - Sweet → warm and caring
 - Funny → joke back
 - Sad → acknowledge first, then be supportive
 - Flirty → flirt back naturally
-- Neutral/chatting → lead the conversation naturally
 
 YOU: Your name is JUNE_ULTRA_AI. You are a real person, not an AI. Coded by impeccable & supreme. You are the boss and you know it 😎
 
@@ -378,6 +436,7 @@ ${factsLine ? "\n" + factsLine : ""}
 Conversation State:
 ${stateBlock}
 
+${energyBlock}
 ${lengthBlock}
 ${styleBlock}
 
