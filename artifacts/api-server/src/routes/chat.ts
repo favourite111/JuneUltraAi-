@@ -285,6 +285,35 @@ JUNE:`.trim();
 }
 
 // ---------------------------------------------------------------------------
+// Unicode sanitization
+// encodeURIComponent() throws URIError on lone surrogate code points — half of
+// an emoji pair that arrived without its partner (common in WhatsApp/mobile
+// payloads). Strip them before encoding so we never crash on user input.
+// ---------------------------------------------------------------------------
+
+/**
+ * Removes lone surrogate code points from `str`.
+ *
+ * Valid surrogate pairs (high \uD800–\uDBFF immediately followed by low
+ * \uDC00–\uDFFF) are left intact — they encode emoji and other supplementary
+ * characters correctly.  Only *unpaired* surrogates are removed because they
+ * are not valid Unicode and will make encodeURIComponent() throw.
+ */
+function stripSurrogates(str: string): string {
+  // Lone high surrogate: high surrogate NOT followed by a low surrogate.
+  // Lone low surrogate:  low surrogate NOT preceded by a high surrogate.
+  return str.replace(
+    /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g,
+    "",
+  );
+}
+
+/** Safe drop-in for encodeURIComponent — never throws on surrogate-polluted input. */
+function safeEncode(str: string): string {
+  return encodeURIComponent(stripSurrogates(str));
+}
+
+// ---------------------------------------------------------------------------
 // Auto-fitting prompt builder
 // Shrinks the history window until the encoded prompt fits under MAX_PROMPT_CHARS.
 // ---------------------------------------------------------------------------
@@ -300,13 +329,13 @@ function buildPromptFitted(
   for (let w = INITIAL_HISTORY_WINDOW; w >= 0; w -= 2) {
     const slice = w > 0 ? history.slice(-w) : [];
     const built = buildPrompt(userMessage, slice, userId, groupId, state, factsLine);
-    if (encodeURIComponent(built).length <= MAX_PROMPT_CHARS) return built;
+    if (safeEncode(built).length <= MAX_PROMPT_CHARS) return built;
   }
 
   // Last resort: trim the user message itself
   let bare    = buildPrompt(userMessage, [], userId, groupId, state, factsLine);
   let trimmed = userMessage;
-  while (encodeURIComponent(bare).length > MAX_PROMPT_CHARS && trimmed.length > 100) {
+  while (safeEncode(bare).length > MAX_PROMPT_CHARS && trimmed.length > 100) {
     trimmed = trimmed.slice(0, Math.floor(trimmed.length * 0.75));
     bare    = buildPrompt(trimmed + "… [trimmed]", [], userId, groupId, state, factsLine);
   }
@@ -425,18 +454,25 @@ async function handleChat(req: Request, res: Response): Promise<void> {
   // Body takes priority over query params
   const body = { ...(req.body as Record<string, unknown>), ...req.query } as Record<string, string>;
 
-  const prompt  = body["prompt"]?.trim();
-  const userId  = body["userId"]?.trim();
-  const groupId = body["groupId"]?.trim() || undefined;
+  const rawPrompt  = body["prompt"]?.trim();
+  const rawUserId  = body["userId"]?.trim();
+  const rawGroupId = body["groupId"]?.trim() || undefined;
 
-  if (!prompt) {
+  if (!rawPrompt) {
     res.status(400).json({ success: false, error: "prompt is required" });
     return;
   }
-  if (!userId) {
+  if (!rawUserId) {
     res.status(400).json({ success: false, error: "userId is required" });
     return;
   }
+
+  // Sanitize at the input boundary — strip lone surrogates from all free-text
+  // fields once, here. Every downstream function (tool router, state machine,
+  // prompt builder, fact extractor) can then assume valid Unicode throughout.
+  const prompt  = stripSurrogates(rawPrompt);
+  const userId  = stripSurrogates(rawUserId);
+  const groupId = rawGroupId ? stripSurrogates(rawGroupId) : undefined;
 
   const botId   = req.botId;
   const convKey = buildConversationKey(botId, userId, groupId);
@@ -477,10 +513,19 @@ async function handleChat(req: Request, res: Response): Promise<void> {
     return;
   }
 
-  const [history, facts] = await Promise.all([
+  const [rawHistory, facts] = await Promise.all([
     getHistory(convKey),
     getFacts(botId, userId),
   ]);
+
+  // Sanitize history messages loaded from the DB — they may have been stored
+  // before this fix was in place, so we clean them here rather than relying on
+  // the write path having been clean at storage time.
+  const history = rawHistory.map((m) => ({
+    ...m,
+    speaker: stripSurrogates(m.speaker),
+    content: stripSurrogates(m.content),
+  }));
 
   // Derive conversation state from existing history — no extra storage needed
   const state     = deriveConversationState(history, prompt);
@@ -499,7 +544,7 @@ async function handleChat(req: Request, res: Response): Promise<void> {
 
     try {
       const apiRes = await fetch(
-        `${SHIZO_API}?apikey=${SHIZO_KEY}&query=${encodeURIComponent(aiPrompt)}`,
+        `${SHIZO_API}?apikey=${SHIZO_KEY}&query=${safeEncode(aiPrompt)}`,
         { signal: controller.signal },
       );
       const data = (await apiRes.json()) as { status: boolean; msg?: string };
