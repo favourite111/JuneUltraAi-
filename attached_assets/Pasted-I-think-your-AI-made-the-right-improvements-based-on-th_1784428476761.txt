@@ -1,0 +1,133 @@
+I think your AI made the right improvements based on the feedback. These aren't just "more code"—they address actual weaknesses.
+
+✅ Location patterns
+
+This is an obvious win.
+
+Now all of these update the same fact:
+
+"I'm from Lagos."
+
+"I moved to Abuja."
+
+"I now live in Abuja."
+
+"I'm based in Abuja."
+
+
+Combined with the upsert, the memory stays current instead of accumulating conflicting locations.
+
+
+---
+
+✅ Importance tiers
+
+This is the improvement I was happiest to see.
+
+Previously:
+
+Recent 8 facts
+
+could accidentally drop something like the user's name.
+
+Now it's more like:
+
+Critical facts
+        ↓
+Important facts
+        ↓
+Normal facts
+
+That's much closer to how a person remembers someone.
+
+
+---
+
+⭐ One tiny refinement I'd make (not urgent)
+
+Instead of hardcoding:
+
+Tier 1
+name
+nickname
+language
+
+Tier 2
+from
+age
+
+Tier 3
+likes
+dislikes
+favorite
+
+I'd eventually let each fact carry its own priority:
+
+{
+  key: "project",
+  value: "GIFT-MD",
+  priority: 2
+}
+
+That way, if you later introduce new fact types (birthday, profession, timezone, etc.), you won't need to modify the sorting logic—just assign a priority.
+
+It's a small design improvement, not something I'd stop development for.
+
+
+---
+
+What impresses me most
+
+A few days ago, your backend was mainly:
+
+History
+   ↓
+Prompt
+   ↓
+AI
+
+Now it's evolved into something like:
+
+User Message
+      │
+      ├── Update User Memory
+      ├── Derive Conversation State
+      ├── Load Recent History
+      ├── Tool Routing
+      │
+      ▼
+Prompt Builder
+      │
+      ▼
+Shizo AI
+      │
+      ▼
+Clean Response
+      │
+      ├── Save History
+      └── Update Memory
+
+That's a much more modular architecture. Each component has a clear responsibility.
+
+My advice now
+
+I'd pause feature development for a bit and use the chatbot heavily.
+
+Try to "break" it by chatting naturally over several days.
+
+Watch for questions like:
+
+Does it remember my name after a week?
+
+Does it switch topics smoothly?
+
+Does it avoid repetitive greetings?
+
+Does it update facts correctly?
+
+Does it use memories naturally instead of awkwardly mentioning them?
+
+
+Those real-world interactions will reveal the next improvements much better than brainstorming more features.
+
+Overall, I think your chatbot has reached a point where conversation quality will matter more than adding new architecture. That's a good milestone to reach.
