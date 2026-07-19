@@ -55,8 +55,11 @@ const FACT_PATTERNS: Array<{ key: string; pattern: RegExp; group: number }> = [
   { key: "dislikes", pattern: /\bi (?:really )?(?:hate|dislike|can't stand|don't like) ([^.!?\n]{3,35})/i, group: 1 },
   // Favourite
   { key: "favorite", pattern: /\bmy (?:fav(?:ou?rite)?) (?:\w+ )?is ([^.!?\n]{2,35})/i, group: 1 },
-  // Location
+  // Location — initial + updates ("I moved to", "I'm based in", etc.)
   { key: "from", pattern: /\bi(?:'m| am) from ([A-Za-z][\w ,]{2,25})/i, group: 1 },
+  { key: "from", pattern: /\bi(?:'ve)? moved to ([A-Za-z][\w ,]{2,25})/i, group: 1 },
+  { key: "from", pattern: /\bi(?:'m| am) (?:now )?(?:living|based) in ([A-Za-z][\w ,]{2,25})/i, group: 1 },
+  { key: "from", pattern: /\bi now live in ([A-Za-z][\w ,]{2,25})/i, group: 1 },
   // Age (only plausible human ages)
   { key: "age", pattern: /\bi(?:'m| am) (\d{1,2})(?: years? old)?\b/i, group: 1 },
   // Language
@@ -90,6 +93,31 @@ export function extractFacts(message: string): UserFact[] {
 }
 
 // ---------------------------------------------------------------------------
+// Fact importance tiers — critical facts are always injected first so they
+// never get crowded out by newer but less important preferences.
+//
+//   1 = Critical  — name, nickname, language (identity basics)
+//   2 = Important — location, age (stable personal context)
+//   3 = Normal    — likes, dislikes, favorite (preferences, can rotate)
+// ---------------------------------------------------------------------------
+const FACT_PRIORITY: Record<string, number> = {
+  name:     1,
+  nickname: 1,
+  language: 1,
+  from:     2,
+  age:      2,
+  likes:    3,
+  dislikes: 3,
+  favorite: 3,
+};
+
+function priorityOf(key: string): number {
+  return FACT_PRIORITY[key] ?? 3;
+}
+
+const MAX_FACTS_IN_PROMPT = 8;
+
+// ---------------------------------------------------------------------------
 // DB helpers
 // ---------------------------------------------------------------------------
 
@@ -120,13 +148,22 @@ export async function getFacts(
 ): Promise<Record<string, string>> {
   const sql = getSql();
   try {
+    // Fetch more than we need so the tier sort has enough to work with.
+    // DB orders by recency; we re-sort in code so critical facts (name,
+    // nickname, language) always survive the MAX_FACTS_IN_PROMPT slice,
+    // even if the user hasn't mentioned them recently.
     const rows = await sql<{ fact_key: string; fact_value: string }[]>`
       SELECT fact_key, fact_value FROM user_facts
       WHERE bot_id = ${botId} AND user_id = ${userId}
       ORDER BY updated_at DESC
-      LIMIT 8
+      LIMIT 20
     `;
-    return Object.fromEntries(rows.map((r) => [r.fact_key, r.fact_value]));
+    const sorted = [...rows].sort(
+      (a, b) => priorityOf(a.fact_key) - priorityOf(b.fact_key),
+    );
+    return Object.fromEntries(
+      sorted.slice(0, MAX_FACTS_IN_PROMPT).map((r) => [r.fact_key, r.fact_value]),
+    );
   } catch {
     return {};
   }
