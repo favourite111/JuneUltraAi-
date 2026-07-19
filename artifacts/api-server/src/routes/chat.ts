@@ -687,6 +687,65 @@ function cleanResponse(raw: string): string {
 }
 
 // ---------------------------------------------------------------------------
+// AI Loop Protection
+// Detects when the bot is likely talking to another AI or itself.
+//
+// Trigger conditions (ALL must be true):
+//   1. The last two messages in stored history are both from the bot
+//   2. Those two bot messages are within 5 seconds of each other
+//   3. The current incoming prompt is nearly identical to the last bot reply
+//
+// "Nearly identical" covers:
+//   - Exact match after normalizing whitespace, case, and punctuation
+//   - Echo/prefix patterns (one string contains the other)
+//   - >= 80% token overlap (handles minor rephrasing by the other AI)
+//
+// Response: { success: false, loop_detected: true } — no reply generated.
+// The message is also NOT stored so it doesn't pollute conversation history.
+// ---------------------------------------------------------------------------
+
+const LOOP_WINDOW_SEC = 5;
+
+function normalizeForLoop(s: string): string {
+  return s.toLowerCase().trim().replace(/\s+/g, " ").replace(/[^\w\s]/g, "");
+}
+
+function isNearlyIdentical(a: string, b: string): boolean {
+  const na = normalizeForLoop(a);
+  const nb = normalizeForLoop(b);
+  if (!na || !nb) return false;
+
+  // Exact match after normalization
+  if (na === nb) return true;
+
+  // Echo / prefix pattern — one is a trimmed version of the other
+  if (na.includes(nb) || nb.includes(na)) return true;
+
+  // Token overlap >= 80%
+  const tokensA = na.split(" ").filter(Boolean);
+  const setB    = new Set(nb.split(" ").filter(Boolean));
+  if (tokensA.length === 0 || setB.size === 0) return false;
+  const overlap = tokensA.filter(t => setB.has(t)).length;
+  return overlap / Math.min(tokensA.length, setB.size) >= 0.8;
+}
+
+function detectAiLoop(history: Message[], incomingPrompt: string): boolean {
+  const botMsgs = history.filter(m => m.role === "assistant");
+  if (botMsgs.length < 2) return false;
+
+  const last     = botMsgs[botMsgs.length - 1]!;
+  const prevLast = botMsgs[botMsgs.length - 2]!;
+  const nowSec   = Math.floor(Date.now() / 1000);
+
+  // Condition 1 + 2: both recent bot messages must be within the window
+  if (nowSec - last.ts     > LOOP_WINDOW_SEC) return false;
+  if (last.ts - prevLast.ts > LOOP_WINDOW_SEC) return false;
+
+  // Condition 3: incoming prompt echoes the last bot reply
+  return isNearlyIdentical(incomingPrompt, last.content);
+}
+
+// ---------------------------------------------------------------------------
 // Shared chat handler
 // ---------------------------------------------------------------------------
 
@@ -767,6 +826,14 @@ async function handleChat(req: Request, res: Response): Promise<void> {
     speaker: stripSurrogates(m.speaker),
     content: stripSurrogates(m.content),
   }));
+
+  // AI loop guard — bail out before any AI call or state work if the bot
+  // appears to be talking to itself or another bot. Message is NOT stored.
+  if (detectAiLoop(history, prompt)) {
+    req.log.warn({ userId, botId, convKey }, "AI loop detected — message silently dropped");
+    res.json({ success: false, loop_detected: true });
+    return;
+  }
 
   // Derive conversation state from existing history, then merge DB-sourced pending topics
   // into the single ConversationState object (Phase C consolidation).
