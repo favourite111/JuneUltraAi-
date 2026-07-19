@@ -6,16 +6,18 @@ interface TextToPdfArgs {
   text: string;
 }
 
-// STRICT intent-based triggers only.
+// Intent-based triggers.
 //
-// Every phrase here requires either a demonstrative pronoun ("this" / "that")
-// pointing at specific content the user wants converted, or an explicit
-// personal request ("me a pdf"). Generic phrases like "text to pdf",
-// "convert to pdf", "create pdf", "generate pdf" are intentionally excluded
-// because they appear naturally in capability descriptions and feature lists
-// (e.g. JUNE's own reply: "I can do URL shortening, text to PDF, QR codes…")
-// and would fire the tool on any message that quotes or repeats that text.
+// "convert to pdf <text>" is included directly so the advertised syntax works.
+// The false-positive risk from JUNE's own capability description ("I can do
+// text to PDF...") is mitigated by the content check: after stripping command
+// words, an empty remainder returns null so the tool never fires on bare
+// capability quotes.
+//
+// Demonstrative-pronoun forms ("convert this to pdf") remain for users who
+// paste content first and refer to it with "this"/"that".
 const TRIGGER_PHRASES = [
+  "convert to pdf",
   "convert this to pdf",
   "convert that to pdf",
   "convert this text to pdf",
