@@ -9,6 +9,12 @@ import {
   type Message,
 } from "../lib/conversation-store.js";
 import { routeTool, type ToolContext } from "../lib/tools/registry.js";
+import {
+  extractFacts,
+  saveFacts,
+  getFacts,
+  formatFactsForPrompt,
+} from "../lib/user-memory.js";
 
 const router: IRouter = Router();
 
@@ -165,6 +171,7 @@ function buildPrompt(
   userId: string,
   groupId: string | undefined,
   state: ConversationState,
+  factsLine: string,
 ): string {
   const historyBlock =
     history.length > 0
@@ -266,7 +273,7 @@ TOOLS (real, working — never say "I can't" for these):
 - Screenshot websites → "screenshot of [url]"
 - Text to PDF → "convert to pdf [text]"
 - QR code → "qr code for [text or url]"
-
+${factsLine ? "\n" + factsLine : ""}
 Conversation State:
 ${stateBlock}
 
@@ -288,19 +295,20 @@ function buildPromptFitted(
   userId: string,
   groupId: string | undefined,
   state: ConversationState,
+  factsLine: string,
 ): string {
   for (let w = INITIAL_HISTORY_WINDOW; w >= 0; w -= 2) {
     const slice = w > 0 ? history.slice(-w) : [];
-    const built = buildPrompt(userMessage, slice, userId, groupId, state);
+    const built = buildPrompt(userMessage, slice, userId, groupId, state, factsLine);
     if (encodeURIComponent(built).length <= MAX_PROMPT_CHARS) return built;
   }
 
   // Last resort: trim the user message itself
-  let bare    = buildPrompt(userMessage, [], userId, groupId, state);
+  let bare    = buildPrompt(userMessage, [], userId, groupId, state, factsLine);
   let trimmed = userMessage;
   while (encodeURIComponent(bare).length > MAX_PROMPT_CHARS && trimmed.length > 100) {
     trimmed = trimmed.slice(0, Math.floor(trimmed.length * 0.75));
-    bare    = buildPrompt(trimmed + "… [trimmed]", [], userId, groupId, state);
+    bare    = buildPrompt(trimmed + "… [trimmed]", [], userId, groupId, state, factsLine);
   }
   return bare;
 }
@@ -469,17 +477,21 @@ async function handleChat(req: Request, res: Response): Promise<void> {
     return;
   }
 
-  const history = await getHistory(convKey);
+  const [history, facts] = await Promise.all([
+    getHistory(convKey),
+    getFacts(botId, userId),
+  ]);
 
   // Derive conversation state from existing history — no extra storage needed
-  const state = deriveConversationState(history, prompt);
+  const state     = deriveConversationState(history, prompt);
+  const factsLine = formatFactsForPrompt(facts);
 
   let reply: string;
   const metaReply = matchMetaReply(prompt);
   if (metaReply) {
     reply = metaReply;
   } else {
-    const aiPrompt = buildPromptFitted(prompt, history, userId, groupId, state);
+    const aiPrompt = buildPromptFitted(prompt, history, userId, groupId, state, factsLine);
 
     const AI_TIMEOUT_MS = 18_000;
     const controller    = new AbortController();
@@ -544,6 +556,10 @@ async function handleChat(req: Request, res: Response): Promise<void> {
     { role: "assistant", speaker: "june", content: reply,        ts: now },
   ];
   await appendMessages(convKey, botId, userId, groupId, newMessages);
+
+  // Persist any new personal facts the user revealed — fire-and-forget, non-blocking
+  const newFacts = extractFacts(prompt);
+  if (newFacts.length > 0) void saveFacts(botId, userId, newFacts);
 
   res.json({
     success: true,
