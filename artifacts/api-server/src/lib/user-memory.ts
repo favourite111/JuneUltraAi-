@@ -38,32 +38,39 @@ function isAuthorityClaim(message: string): boolean {
 }
 
 // ---------------------------------------------------------------------------
-// Fact extraction patterns — ordered by priority.
+// Fact extraction patterns — each entry carries its own importance priority:
+//
+//   1 = Critical  — identity basics always included in the prompt
+//   2 = Important — stable personal context
+//   3 = Normal    — preferences that can rotate out of the 8-slot window
+//
+// Adding a new fact type only requires adding an entry here — no separate
+// lookup table to keep in sync.
 // Only one value per key is extracted per message to avoid false positives.
 // ---------------------------------------------------------------------------
-const FACT_PATTERNS: Array<{ key: string; pattern: RegExp; group: number }> = [
-  // Name
-  { key: "name", pattern: /\bmy name is ([A-Za-z][\w ]{0,24})/i, group: 1 },
-  { key: "name", pattern: /\bcall me ([A-Za-z][\w]{1,20})\b/i, group: 1 },
-  { key: "name", pattern: /\bi go by ([A-Za-z][\w]{1,20})\b/i, group: 1 },
-  // Nickname
-  { key: "nickname", pattern: /\bmy nickname is ([A-Za-z][\w ]{0,20})/i, group: 1 },
-  { key: "nickname", pattern: /\bthey (?:call|know) me (?:as )?([A-Za-z][\w ]{0,20})/i, group: 1 },
-  // Likes
-  { key: "likes", pattern: /\bi (?:really )?(?:like|love|enjoy|adore) ([^.!?\n]{3,35})/i, group: 1 },
-  // Dislikes
-  { key: "dislikes", pattern: /\bi (?:really )?(?:hate|dislike|can't stand|don't like) ([^.!?\n]{3,35})/i, group: 1 },
-  // Favourite
-  { key: "favorite", pattern: /\bmy (?:fav(?:ou?rite)?) (?:\w+ )?is ([^.!?\n]{2,35})/i, group: 1 },
-  // Location — initial + updates ("I moved to", "I'm based in", etc.)
-  { key: "from", pattern: /\bi(?:'m| am) from ([A-Za-z][\w ,]{2,25})/i, group: 1 },
-  { key: "from", pattern: /\bi(?:'ve)? moved to ([A-Za-z][\w ,]{2,25})/i, group: 1 },
-  { key: "from", pattern: /\bi(?:'m| am) (?:now )?(?:living|based) in ([A-Za-z][\w ,]{2,25})/i, group: 1 },
-  { key: "from", pattern: /\bi now live in ([A-Za-z][\w ,]{2,25})/i, group: 1 },
-  // Age (only plausible human ages)
-  { key: "age", pattern: /\bi(?:'m| am) (\d{1,2})(?: years? old)?\b/i, group: 1 },
-  // Language
-  { key: "language", pattern: /\bi (?:speak|prefer) ([A-Za-z]{3,20})\b/i, group: 1 },
+const FACT_PATTERNS: Array<{ key: string; priority: number; pattern: RegExp; group: number }> = [
+  // Name — priority 1 (critical)
+  { key: "name",     priority: 1, pattern: /\bmy name is ([A-Za-z][\w ]{0,24})/i,                              group: 1 },
+  { key: "name",     priority: 1, pattern: /\bcall me ([A-Za-z][\w]{1,20})\b/i,                                group: 1 },
+  { key: "name",     priority: 1, pattern: /\bi go by ([A-Za-z][\w]{1,20})\b/i,                                group: 1 },
+  // Nickname — priority 1 (critical)
+  { key: "nickname", priority: 1, pattern: /\bmy nickname is ([A-Za-z][\w ]{0,20})/i,                          group: 1 },
+  { key: "nickname", priority: 1, pattern: /\bthey (?:call|know) me (?:as )?([A-Za-z][\w ]{0,20})/i,          group: 1 },
+  // Language — priority 1 (critical)
+  { key: "language", priority: 1, pattern: /\bi (?:speak|prefer) ([A-Za-z]{3,20})\b/i,                         group: 1 },
+  // Location — priority 2 (important); all patterns update the same key via upsert
+  { key: "from",     priority: 2, pattern: /\bi(?:'m| am) from ([A-Za-z][\w ,]{2,25})/i,                       group: 1 },
+  { key: "from",     priority: 2, pattern: /\bi(?:'ve)? moved to ([A-Za-z][\w ,]{2,25})/i,                     group: 1 },
+  { key: "from",     priority: 2, pattern: /\bi(?:'m| am) (?:now )?(?:living|based) in ([A-Za-z][\w ,]{2,25})/i, group: 1 },
+  { key: "from",     priority: 2, pattern: /\bi now live in ([A-Za-z][\w ,]{2,25})/i,                          group: 1 },
+  // Age — priority 2 (important; only plausible human ages)
+  { key: "age",      priority: 2, pattern: /\bi(?:'m| am) (\d{1,2})(?: years? old)?\b/i,                       group: 1 },
+  // Likes — priority 3 (normal)
+  { key: "likes",    priority: 3, pattern: /\bi (?:really )?(?:like|love|enjoy|adore) ([^.!?\n]{3,35})/i,      group: 1 },
+  // Dislikes — priority 3 (normal)
+  { key: "dislikes", priority: 3, pattern: /\bi (?:really )?(?:hate|dislike|can't stand|don't like) ([^.!?\n]{3,35})/i, group: 1 },
+  // Favourite — priority 3 (normal)
+  { key: "favorite", priority: 3, pattern: /\bmy (?:fav(?:ou?rite)?) (?:\w+ )?is ([^.!?\n]{2,35})/i,          group: 1 },
 ];
 
 /**
@@ -93,26 +100,17 @@ export function extractFacts(message: string): UserFact[] {
 }
 
 // ---------------------------------------------------------------------------
-// Fact importance tiers — critical facts are always injected first so they
-// never get crowded out by newer but less important preferences.
-//
-//   1 = Critical  — name, nickname, language (identity basics)
-//   2 = Important — location, age (stable personal context)
-//   3 = Normal    — likes, dislikes, favorite (preferences, can rotate)
+// Derived priority lookup — built once at module load from FACT_PATTERNS so
+// there is a single source of truth. Adding a new fact type only requires
+// an entry in FACT_PATTERNS; no second table to keep in sync.
 // ---------------------------------------------------------------------------
-const FACT_PRIORITY: Record<string, number> = {
-  name:     1,
-  nickname: 1,
-  language: 1,
-  from:     2,
-  age:      2,
-  likes:    3,
-  dislikes: 3,
-  favorite: 3,
-};
+const KEY_PRIORITY: Record<string, number> = {};
+for (const { key, priority } of FACT_PATTERNS) {
+  if (!(key in KEY_PRIORITY)) KEY_PRIORITY[key] = priority;
+}
 
 function priorityOf(key: string): number {
-  return FACT_PRIORITY[key] ?? 3;
+  return KEY_PRIORITY[key] ?? 3;
 }
 
 const MAX_FACTS_IN_PROMPT = 8;
