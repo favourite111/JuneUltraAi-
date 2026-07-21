@@ -41,8 +41,11 @@ lib/db/                         # Shared DB utilities (@workspace/db)
 
 | Secret | Description |
 |--------|-------------|
-| `NEON_DATABASE_URL` | Neon PostgreSQL connection string |
 | `ADMIN_KEY` | Long random string protecting `/v1/admin/*`. Separate from any bot API key. |
+
+> **On Replit:** `DATABASE_URL` is provided automatically by Replit's built-in PostgreSQL — no need to set `NEON_DATABASE_URL`. The server falls back to `DATABASE_URL` when `NEON_DATABASE_URL` is absent.
+>
+> **External deployment (Koyeb/Render):** Set `NEON_DATABASE_URL` to your Neon connection string.
 
 Optional:
 - `CONVERSATION_TTL_MS` — inactivity timeout before history is cleared (default: 86400000 = 24 hours)
