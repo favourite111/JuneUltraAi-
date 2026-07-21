@@ -253,6 +253,8 @@ export interface ModelCallOptions {
   maxTokens?: number;
   model?: string;
   stopSequences?: string[];
+  timeout?: number;
+  retryAttempts?: number;
 }
 
 export interface ModelResponse {
@@ -283,6 +285,8 @@ export interface HybridConfig {
   enabled: boolean;
   modelProvider?: string;
   model?: string;
+  timeout?: number;
+  retryAttempts?: number;
 }
 
 export interface ConfidenceThresholds {

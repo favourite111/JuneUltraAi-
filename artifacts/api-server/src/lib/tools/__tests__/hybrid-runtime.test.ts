@@ -191,6 +191,102 @@ describe("Hybrid Agent Runtime - Phase 3B Milestone 1", () => {
     expect(events.some(e => e.type === "llm.decision")).toBe(true);
   });
 
+  it("falls back to no_capability when LLM times out and retries fail", async () => {
+    vi.useFakeTimers();
+    const { runtime: baseRuntime, events, eventBus } = createFixture(() => null, "req-6");
+
+    // Mock a model provider that always times out
+    const modelProvider = new MockModelProvider([]);
+    modelProvider.generate = vi.fn(async () => {
+      const error = new Error("AbortError");
+      error.name = "AbortError";
+      throw error;
+    });
+
+    const promptManager = new MockPromptManager([{
+      type: "tool_selection",
+      toolName: "test-tool",
+      reasoning: "LLM selected test-tool",
+      confidence: 0.9,
+    }]);
+
+    const runtimeWithLLM = createDeterministicAgentRuntime({
+      clock: { now: () => 1_700_000_000_000 },
+      idGenerator: { next: () => "req-6" },
+      eventBus,
+      router: () => null,
+      modelProvider,
+      promptManager,
+      hybridConfig: { enabled: true, timeout: 1000, retryAttempts: 0 }, // 1s timeout, 0 retries
+    });
+
+    const executePromise = runtimeWithLLM.execute(request("timeout prompt"));
+
+    // Advance timers to trigger the timeout
+    await vi.advanceTimersByTimeAsync(1000); // Advance by timeout duration
+
+    const response = await executePromise;
+
+    expect(response.status).toBe("no_capability");
+    expect(modelProvider.generate).toHaveBeenCalledTimes(1); // Initial attempt only
+    expect(events.some(e => e.type === "llm.request")).toBe(true);
+    expect(events.some(e => e.type === "llm.response")).toBe(false); // No successful response
+    expect(events.some(e => e.type === "llm.decision")).toBe(false); // No successful decision
+  });
+
+  it("succeeds on retry after initial LLM timeout", async () => {
+    vi.useFakeTimers();
+    const { runtime: baseRuntime, events, eventBus } = createFixture(() => null, "req-7");
+
+    // Mock a model provider that times out once, then succeeds
+    const modelProvider = new MockModelProvider([{ text: "llm-response-retry" }]);
+    let callCount = 0;
+    modelProvider.generate = vi.fn(async () => {
+      callCount++;
+      if (callCount === 1) {
+        const error = new Error("AbortError");
+        error.name = "AbortError";
+        throw error;
+      } else {
+        return { text: "llm-response-retry" };
+      }
+    });
+
+    const promptManager = new MockPromptManager([{
+      type: "tool_selection",
+      toolName: "test-tool",
+      reasoning: "LLM selected test-tool on retry",
+      confidence: 0.9,
+    }]);
+
+    const runtimeWithLLM = createDeterministicAgentRuntime({
+      clock: { now: () => 1_700_000_000_000 },
+      idGenerator: { next: () => "req-7" },
+      eventBus,
+      router: () => null,
+      modelProvider,
+      promptManager,
+      hybridConfig: { enabled: true, timeout: 1000, retryAttempts: 1 }, // 1s timeout, 1 retry
+    });
+
+    const executePromise = runtimeWithLLM.execute(request("retry prompt"));
+
+    // Advance timers to trigger the first timeout
+    await vi.advanceTimersByTimeAsync(1000); // Advance by timeout duration
+
+    // Advance timers to trigger the second (successful) call
+    await vi.advanceTimersByTimeAsync(1000); // Advance by timeout duration
+
+    const response = await executePromise;
+
+    expect(response.status).toBe("completed");
+    expect((response as CompletedRuntimeResponse).tool.name).toBe("test-tool");
+    expect(modelProvider.generate).toHaveBeenCalledTimes(2); // Initial attempt + 1 retry
+    expect(events.some(e => e.type === "llm.request")).toBe(true);
+    expect(events.some(e => e.type === "llm.response")).toBe(true);
+    expect(events.some(e => e.type === "llm.decision")).toBe(true);
+  });
+
   it("handles LLM clarification requests", async () => {
     const { runtime: baseRuntime, events, eventBus } = createFixture(() => null, "req-3");
 

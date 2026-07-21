@@ -219,8 +219,6 @@ describe("Deterministic Agent Runtime Pipeline - Phase 3A Milestone 6", () => {
     expect(eventTypes(events)).toEqual([
       "router.started",
       "router.completed",
-      "planner.started",
-      "planner.completed",
     ]);
   });
 

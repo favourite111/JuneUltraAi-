@@ -1,0 +1,48 @@
+$ vitest run --testTimeout 15000 src/lib/tools/__tests__/hybrid-runtime.test.ts
+
+[1m[30m[46m RUN [49m[39m[22m [36mv4.1.10 [39m[90m/home/ubuntu/JuneUltraAi-/artifacts/api-server[39m
+
+ [31m❯[39m src/lib/tools/__tests__/hybrid-runtime.test.ts [2m([22m[2m7 tests[22m[2m | [22m[31m2 failed[39m[2m)[22m[33m 30034[2mms[22m[39m
+     [32m✓[39m consults LLM when deterministic router has low confidence[32m 5[2mms[22m[39m
+     [32m✓[39m fails when LLM decision has low confidence[32m 1[2mms[22m[39m
+     [32m✓[39m falls back to no_capability when hybrid intelligence is disabled[32m 1[2mms[22m[39m
+     [32m✓[39m handles LLM no_action decision[32m 0[2mms[22m[39m
+[31m     [31m×[31m falls back to no_capability when LLM times out and retries fail[39m[33m 15007[2mms[22m[39m
+[31m     [31m×[31m succeeds on retry after initial LLM timeout[39m[33m 15017[2mms[22m[39m
+     [32m✓[39m handles LLM clarification requests[32m 1[2mms[22m[39m
+
+[31m⎯⎯⎯⎯⎯⎯⎯[39m[1m[41m Failed Tests 2 [49m[22m[31m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[41m[1m FAIL [22m[49m src/lib/tools/__tests__/hybrid-runtime.test.ts[2m > [22mHybrid Agent Runtime - Phase 3B Milestone 1[2m > [22mfalls back to no_capability when LLM times out and retries fail
+[31m[1mError[22m: Test timed out in 15000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".[39m
+[36m [2m❯[22m src/lib/tools/__tests__/hybrid-runtime.test.ts:[2m194:3[22m[39m
+    [90m192|[39m   })[33m;[39m
+    [90m193|[39m
+    [90m194|[39m   it("falls back to no_capability when LLM times out and retries fail"…
+    [90m   |[39m   [31m^[39m
+    [90m195|[39m     vi[33m.[39m[34museFakeTimers[39m()[33m;[39m
+    [90m196|[39m     const { runtime: baseRuntime, events, eventBus } = createFixture((…
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m src/lib/tools/__tests__/hybrid-runtime.test.ts[2m > [22mHybrid Agent Runtime - Phase 3B Milestone 1[2m > [22msucceeds on retry after initial LLM timeout
+[31m[1mError[22m: Test timed out in 15000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".[39m
+[36m [2m❯[22m src/lib/tools/__tests__/hybrid-runtime.test.ts:[2m237:3[22m[39m
+    [90m235|[39m   })[33m;[39m
+    [90m236|[39m
+    [90m237|[39m   [34mit[39m([32m"succeeds on retry after initial LLM timeout"[39m[33m,[39m [35masync[39m () [33m=>[39m {
+    [90m   |[39m   [31m^[39m
+    [90m238|[39m     vi[33m.[39m[34museFakeTimers[39m()[33m;[39m
+    [90m239|[39m     const { runtime: baseRuntime, events, eventBus } = createFixture((…
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯[22m[39m
+
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[90m (1)[39m
+[2m      Tests [22m [1m[31m2 failed[39m[22m[2m | [22m[1m[32m5 passed[39m[22m[90m (7)[39m
+[2m   Start at [22m 22:36:58
+[2m   Duration [22m 30.54s[2m (transform 119ms, setup 0ms, import 344ms, tests 30.03s, environment 0ms)[22m
+
+[ELIFECYCLE] Test failed. See above for more details.

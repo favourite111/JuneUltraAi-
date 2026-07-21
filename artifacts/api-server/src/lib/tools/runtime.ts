@@ -119,51 +119,76 @@ export function createDeterministicAgentRuntime(
             payload: { prompt: llmPrompt, timestamp: context.clock.now() },
           });
 
-          const llmResponse = await configuredModelProvider.generate(llmPrompt, { model: dependencies.hybridConfig?.model });
-
-          eventBus.emit({
-            type: "llm.response",
-            context,
-            payload: { response: llmResponse, timestamp: context.clock.now() },
-          });
-
-          const llmDecision = configuredPromptManager.parseResponse(llmResponse.text);
-
-          eventBus.emit({
-            type: "llm.decision",
-            context,
-            payload: { decision: llmDecision, timestamp: context.clock.now() },
-          });
-
-          if (llmDecision.type === "tool_selection" && llmDecision.toolName && llmDecision.confidence && llmDecision.confidence >= confidenceThresholds.llmMinConfidence) {
-            const llmSelectedTool = ToolRegistry.getTool(llmDecision.toolName);
-            if (llmSelectedTool) {
-              routed = { tool: llmSelectedTool, args: llmDecision.toolArgs ?? {}, confidence: { score: llmDecision.confidence, reasoning: [llmDecision.reasoning] } };
-            } else {
-              // If LLM suggests a non-existent tool, treat as no capability
-              routed = null;
+          let llmResponse: ModelResponse | null = null;
+          const retryAttempts = dependencies.hybridConfig?.retryAttempts ?? 1;
+          
+          for (let attempt = 0; attempt <= retryAttempts; attempt++) {
+            try {
+              llmResponse = await configuredModelProvider.generate(llmPrompt, {
+                model: dependencies.hybridConfig?.model,
+                timeout: dependencies.hybridConfig?.timeout,
+              });
+              break; // Success, exit retry loop
+            } catch (error: any) {
+              if (error.name === "AbortError" || error.message === "AbortError") {
+                if (attempt === retryAttempts) {
+                  // All retries failed, break and leave llmResponse as null
+                  break;
+                }
+                // Otherwise, continue to next attempt
+              } else {
+                // Non-timeout error, break and leave llmResponse as null
+                break;
+              }
             }
-          } else if (llmDecision.type === "clarification" && llmDecision.clarificationQuestion) {
-            // Handle clarification, for now, we'll just fail
-            return {
-              status: "failed",
-              context,
-              plan: { planId: context.requestId, goal: request.prompt, steps: [] },
-              tool: { name: "clarification", description: "Clarification needed", match: () => null, execute: async () => ({ type: "text", reply: "Clarification needed", data: {} }) },
-              error: { code: "CLARIFICATION_NEEDED", message: llmDecision.clarificationQuestion, isRetryable: false },
-            };
-          } else if (llmDecision.type === "no_action") {
-            routed = null; // LLM explicitly said no action
           }
+
+          if (!llmResponse) {
+            // LLM failed or timed out, fall back to deterministic routing
+            routed = null;
+          } else {
+            eventBus.emit({
+              type: "llm.response",
+              context,
+              payload: { response: llmResponse, timestamp: context.clock.now() },
+            });
+
+            const llmDecision = configuredPromptManager.parseResponse(llmResponse.text);
+
+            eventBus.emit({
+              type: "llm.decision",
+              context,
+              payload: { decision: llmDecision, timestamp: context.clock.now() },
+            });
+
+            if (llmDecision.type === "tool_selection" && llmDecision.toolName && llmDecision.confidence && llmDecision.confidence >= confidenceThresholds.llmMinConfidence) {
+              const llmSelectedTool = ToolRegistry.getTool(llmDecision.toolName);
+              if (llmSelectedTool) {
+                routed = { tool: llmSelectedTool, args: llmDecision.toolArgs ?? {}, confidence: { score: llmDecision.confidence, reasoning: [llmDecision.reasoning] } };
+              } else {
+                // If LLM suggests a non-existent tool, treat as no capability
+                routed = null;
+              }
+            } else if (llmDecision.type === "clarification" && llmDecision.clarificationQuestion) {
+              // Handle clarification, for now, we'll just fail
+              return {
+                status: "failed",
+                context,
+                plan: { planId: context.requestId, goal: request.prompt, steps: [] },
+                tool: { name: "clarification", description: "Clarification needed", match: () => null, execute: async () => ({ type: "text", reply: "Clarification needed", data: {} }) },
+                error: { code: "CLARIFICATION_NEEDED", message: llmDecision.clarificationQuestion, isRetryable: false },
+              };
+            } else if (llmDecision.type === "no_action") {
+              routed = null; // LLM explicitly said no action
+            }
+          }
+
+
         }
       }
       // If after LLM consultation (or if LLM is disabled) there's still no routed tool,
       // or if hybrid intelligence is explicitly disabled and deterministic router has low confidence,
       // then fall back to no capability.
-      if (!routed || ((!routed || routed.confidence.score < confidenceThresholds.routerMinConfidence) && !dependencies.hybridConfig?.enabled)) {
-        return { status: "no_capability", context, plan: { planId: context.requestId, goal: request.prompt, steps: [] } };
-      }
-
       eventBus.emit({
         type: "router.completed",
         context,
@@ -174,12 +199,16 @@ export function createDeterministicAgentRuntime(
         },
       });
 
+      if (!routed || ((!routed || routed.confidence.score < confidenceThresholds.routerMinConfidence) && !dependencies.hybridConfig?.enabled)) {
+        return { status: "no_capability", context, plan: { planId: context.requestId, goal: request.prompt, steps: [] } };
+      }
+
       // Supplying the router result constrains the planner to one selected tool
       // and intentionally rules out autonomous/re-planning behavior in Phase 3A.
       const planner = createPlanner(context, { selectedTool: routed });
       const plan = planner.plan(request.prompt);
 
-      if (!routed || plan.steps.length === 0) {
+      if (plan.steps.length === 0) {
         return { status: "no_capability", context, plan };
       }
 
