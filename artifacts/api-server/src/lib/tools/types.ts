@@ -177,8 +177,10 @@ export type AgentEvent =
   | { type: "tool.started"; context: ExecutionContext; payload: { toolId: string; timestamp: number; } }
   | { type: "tool.completed"; context: ExecutionContext; payload: { toolId: string; result: ToolResult; timestamp: number; } }
   | { type: "tool.failed"; context: ExecutionContext; payload: { toolId: string; error: ToolError; timestamp: number; } }
-  | { type: "reflection.started"; context: ExecutionContext; payload: { observation: ToolResult | ToolError; timestamp: number; } }
-  | { type: "reflection.completed"; context: ExecutionContext; payload: { nextAction: string; timestamp: number; } };
+  | { type: "reflection.started"; context: ExecutionContext; payload: { observation: ToolResult | ToolError; currentPlanStep: AgentPlanStep; timestamp: number; } }
+  | { type: "reflection.completed"; context: ExecutionContext; payload: { decision: ReflectionDecision; timestamp: number; } }
+  | { type: "reflection.failed"; context: ExecutionContext; payload: { error: ToolError; timestamp: number; } };
+
 
 /**
  * Phase 3A - Event Bus interface.
@@ -208,12 +210,20 @@ export interface AgentPlan {
   steps: AgentPlanStep[];
 }
 
-export interface AgentReflection {
-  observation: ToolResult | string;
-  evaluation: "success" | "failure" | "partial_success";
-  nextAction: "continue_plan" | "replan" | "fallback" | "escalate_to_user";
-  reasoning?: string;
+export enum ReflectionDecisionType {
+  COMPLETE = "complete",
+  CONTINUE = "continue",
+  RETRY = "retry",
+  FAIL = "fail",
 }
+
+export interface ReflectionDecision {
+  type: ReflectionDecisionType;
+  reasoning: string[];
+  nextStepIndex?: number; // For CONTINUE decisions
+  retryCount?: number; // For RETRY decisions
+}
+
 
 export interface ToolError {
   code: string;
