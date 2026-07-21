@@ -64,6 +64,8 @@ async function poll(): Promise<void> {
     `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}` +
     `/contents/${GITHUB_FILE}?ref=${GITHUB_BRANCH}`;
 
+  logger.info({ url }, "GitHub poller: fetching");
+
   let fetchRes: globalThis.Response;
   try {
     fetchRes = await fetch(url, {
@@ -75,19 +77,28 @@ async function poll(): Promise<void> {
       signal: AbortSignal.timeout(15_000),
     });
   } catch (err) {
-    logger.warn({ err }, "GitHub poller: network error");
+    logger.error({ err, url }, "GitHub poller: network error — check internet access or GitHub reachability");
     return;
   }
 
   if (!fetchRes.ok) {
-    logger.warn({ status: fetchRes.status }, "GitHub poller: API error");
+    // Read the body so we can show the GitHub error message (e.g. "Bad credentials", "Not Found")
+    let body: unknown;
+    try { body = await fetchRes.json(); } catch { body = await fetchRes.text().catch(() => "(unreadable)"); }
+    logger.error(
+      { status: fetchRes.status, url, body },
+      "GitHub poller: API error — common causes: wrong token (401), wrong owner/repo/file (404), rate limited (403/429)",
+    );
     return;
   }
 
   const data = (await fetchRes.json()) as GitHubContentsResponse;
 
   if (!data.sha || !data.content) {
-    logger.warn({ msg: data.message }, "GitHub poller: unexpected response");
+    logger.error(
+      { githubMessage: data.message, url },
+      "GitHub poller: unexpected response shape — file path may be wrong or it's a directory, not a file",
+    );
     return;
   }
 
@@ -108,11 +119,33 @@ async function poll(): Promise<void> {
   broadcast({ type: "update", hash: data.sha, version });
 }
 
+// ── Startup env-var banner (printed before anything else) ─────────────────────
+export function logPollerEnvStatus(): void {
+  // Show lengths so paste/copy errors (extra space, truncated value) are obvious
+  logger.info(
+    {
+      GITHUB_TOKEN:              GITHUB_TOKEN  ? `✅ set (${GITHUB_TOKEN.length} chars)` : "❌ MISSING",
+      GITHUB_OWNER:              GITHUB_OWNER  ? `✅ "${GITHUB_OWNER}"`                  : "❌ MISSING",
+      GITHUB_REPO:               GITHUB_REPO   ? `✅ "${GITHUB_REPO}"`                   : "❌ MISSING",
+      GITHUB_FILE_PATH:          GITHUB_FILE,
+      GITHUB_BRANCH:             GITHUB_BRANCH,
+      GITHUB_POLL_INTERVAL_MS:   POLL_MS,
+      CODE_DELIVERY_KEY:         (process.env["CODE_DELIVERY_KEY"] ?? "").length > 0
+                                   ? `✅ set (${(process.env["CODE_DELIVERY_KEY"] ?? "").length} chars)`
+                                   : "❌ MISSING — bots will get 401 on /code and /updates",
+    },
+    "=== GitHub Poller env vars ===",
+  );
+}
+
 // ── Start ─────────────────────────────────────────────────────────────────────
 export function startPoller(): void {
+  logPollerEnvStatus();
+
   if (!GITHUB_TOKEN || !GITHUB_OWNER || !GITHUB_REPO) {
-    logger.warn(
-      "GitHub poller disabled — set GITHUB_TOKEN, GITHUB_OWNER, GITHUB_REPO to enable",
+    logger.error(
+      { impact: "GET /code/chatbot.js will always return 503 until the poller fetches code from GitHub" },
+      "GitHub poller disabled — one or more required env vars are MISSING (see banner above)",
     );
     return;
   }

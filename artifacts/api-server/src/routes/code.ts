@@ -27,13 +27,37 @@ function verifyKey(key: string): boolean {
 router.get("/chatbot.js", (req: Request, res: Response) => {
   const apikey = (req.query["apikey"] as string | undefined) ?? "";
 
+  // Debug: log key verification details (never log the actual key values)
+  const deliveryKeyConfigured = DELIVERY_KEY.length > 0;
+  const apikeyProvided        = apikey.length > 0;
+  req.log.debug(
+    { deliveryKeyConfigured, apikeyProvided, apikeyLen: apikey.length, deliveryKeyLen: DELIVERY_KEY.length },
+    "GET /code/chatbot.js — key check",
+  );
+
   if (!verifyKey(apikey)) {
+    if (!deliveryKeyConfigured) {
+      req.log.error(
+        "GET /code/chatbot.js → 401: CODE_DELIVERY_KEY env var is not set — set it so bots can authenticate",
+      );
+    } else if (!apikeyProvided) {
+      req.log.warn("GET /code/chatbot.js → 401: request sent no apikey query param");
+    } else {
+      req.log.warn(
+        { apikeyLen: apikey.length, deliveryKeyLen: DELIVERY_KEY.length },
+        "GET /code/chatbot.js → 401: apikey does not match CODE_DELIVERY_KEY (length or content mismatch)",
+      );
+    }
     res.status(401).json({ success: false, error: "Invalid or missing apikey" });
     return;
   }
 
   const code = getCachedCode();
   if (!code) {
+    req.log.error(
+      "GET /code/chatbot.js → 503: no code cached yet — GitHub poller has not fetched chatbot.js. " +
+      "Check that GITHUB_TOKEN, GITHUB_OWNER, and GITHUB_REPO are set, and look for poller errors above.",
+    );
     res
       .status(503)
       .json({ success: false, error: "Not ready — server is still fetching the latest code" });
@@ -42,6 +66,7 @@ router.get("/chatbot.js", (req: Request, res: Response) => {
 
   const hash    = getCachedHash();
   const version = getCachedVersion();
+  req.log.info({ hash: hash?.slice(0, 7), version }, "GET /code/chatbot.js → 200: serving cached code");
 
   res.setHeader("Content-Type",  "application/javascript; charset=utf-8");
   res.setHeader("Cache-Control", "no-store");

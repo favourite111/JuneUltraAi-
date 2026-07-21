@@ -36,7 +36,26 @@ function verifyKey(key: string): boolean {
 router.get("/", (req: Request, res: Response) => {
   const apikey = (req.query["apikey"] as string | undefined) ?? "";
 
+  const deliveryKeyConfigured = DELIVERY_KEY.length > 0;
+  const apikeyProvided        = apikey.length > 0;
+  req.log.debug(
+    { deliveryKeyConfigured, apikeyProvided, apikeyLen: apikey.length, deliveryKeyLen: DELIVERY_KEY.length },
+    "GET /updates — key check",
+  );
+
   if (!verifyKey(apikey)) {
+    if (!deliveryKeyConfigured) {
+      req.log.error(
+        "GET /updates → 401: CODE_DELIVERY_KEY env var is not set — bots cannot connect to the SSE stream",
+      );
+    } else if (!apikeyProvided) {
+      req.log.warn("GET /updates → 401: request sent no apikey query param");
+    } else {
+      req.log.warn(
+        { apikeyLen: apikey.length, deliveryKeyLen: DELIVERY_KEY.length },
+        "GET /updates → 401: apikey does not match CODE_DELIVERY_KEY",
+      );
+    }
     res.status(401).json({ success: false, error: "Invalid or missing apikey" });
     return;
   }
