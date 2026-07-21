@@ -165,3 +165,66 @@ export interface RegistryHealth {
   issues?: string[]; // List of identified issues
   unreachableTools?: string[]; // Tools that failed to load/discover
 }
+
+// --- Phase 3A Contracts (Agent Runtime) ---
+
+/**
+ * TODO: Phase 3A - Add a score method to ToolManifest for deterministic confidence scoring.
+ * This will be used by the Capability Router.
+ */
+export interface ScorableToolManifest extends ToolManifest {
+  /**
+   * Returns a deterministic confidence score (0.0-1.0) for how well this tool
+   * matches the given text, without executing the tool.
+   * This score is used by the Capability Router to rank tools.
+   */
+  score(text: string): number;
+}
+
+/**
+ * TODO: Phase 3A - Execution Context for tools and agent components.
+ * Provides all necessary runtime information.
+ */
+export interface ExecutionContext {
+  botId: string;
+  userId: string;
+  groupId?: string;
+  // TODO: Phase 3A - Add full memory, conversation, plannerState, metrics, logger, abortSignal
+  // For now, keep it minimal to avoid breaking changes.
+  // memory: { /* Access to user facts, conversation history, etc. */ };
+  // conversation: { /* Current conversation state */ };
+  // plannerState: { /* State specific to the current planning process */ };
+  // metrics: { /* Interface for emitting metrics */ };
+  // logger: { /* Interface for structured logging */ };
+  // abortSignal: AbortSignal; // For graceful cancellation
+}
+
+/**
+ * TODO: Phase 3A - Agent Event types for the Event Bus.
+ */
+export type AgentEvent =
+  | { type: "planner.started"; payload: { goal: string; timestamp: number; } }
+  | { type: "planner.completed"; payload: { plan: AgentPlan; timestamp: number; } }
+  | { type: "router.started"; payload: { prompt: string; timestamp: number; } }
+  | { type: "router.completed"; payload: { toolId: string | null; confidence: number; timestamp: number; } }
+  | { type: "tool.selected"; payload: { toolId: string; args: unknown; timestamp: number; } }
+  | { type: "tool.started"; payload: { toolId: string; timestamp: number; } }
+  | { type: "tool.completed"; payload: { toolId: string; result: ToolResult; timestamp: number; } }
+  | { type: "tool.failed"; payload: { toolId: string; error: ToolError; timestamp: number; } }
+  | { type: "reflection.started"; payload: { observation: ToolResult | ToolError; timestamp: number; } }
+  | { type: "reflection.completed"; payload: { nextAction: string; timestamp: number; } };
+
+/**
+ * TODO: Phase 3A - Event Bus interface for publishing and subscribing to agent events.
+ */
+export interface EventBus {
+  emit(event: AgentEvent): void;
+  on(eventType: AgentEvent["type"], listener: (event: AgentEvent) => void): void;
+}
+
+// Update the existing Tool interface to include the score method from ScorableToolManifest
+declare module './types.js' {
+  interface Tool<TArgs = unknown> {
+    score?(text: string): number;
+  }
+}
