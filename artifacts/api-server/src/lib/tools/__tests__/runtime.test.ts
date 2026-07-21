@@ -3,6 +3,11 @@ import { createExecutionContext } from "../context.js";
 import { AgentEventBus } from "../event-bus.js";
 import { routeTool } from "../registry.js";
 
+const runtimeDependencies = {
+  clock: { now: () => 1_725_000_000_000 },
+  idGenerator: { next: () => "runtime-test-request-id" },
+};
+
 describe("Agent Runtime - Phase 3A", () => {
   describe("Milestone 1: Execution Context", () => {
     it("should create an immutable execution context", () => {
@@ -15,7 +20,7 @@ describe("Agent Runtime - Phase 3A", () => {
         history: [{ role: "user", content: "hello" }],
         logger: {},
         metrics: {},
-      });
+      }, runtimeDependencies);
 
       expect(context.user.id).toBe("user-456");
       expect(context.metadata.requestId).toBeDefined();
@@ -37,7 +42,7 @@ describe("Agent Runtime - Phase 3A", () => {
         history: [],
         logger: {},
         metrics: {},
-      });
+      }, runtimeDependencies);
 
       const listener = vi.fn();
       eventBus.on("tool.started", listener);

@@ -69,12 +69,58 @@ export interface ScorableToolManifest extends ToolManifest {
 }
 
 /**
- * Phase 3A - Execution Context for tools and agent components.
- * This is the central immutable contract for the agent runtime.
+ * Deterministic dependencies supplied by the composition root for every
+ * request. The runtime never reaches for a clock or ID source directly.
+ */
+export interface ExecutionContextClock {
+  now(): number;
+}
+
+export interface ExecutionContextIdGenerator {
+  next(): string;
+}
+
+export interface ExecutionContextDependencies {
+  readonly clock: ExecutionContextClock;
+  readonly idGenerator: ExecutionContextIdGenerator;
+}
+
+/**
+ * Input owned by the request boundary before it is snapshotted into an
+ * immutable ExecutionContext. `facts` remains as a temporary legacy alias for
+ * callers created before the canonical `memory` input was introduced.
+ */
+export interface ExecutionContextInput {
+  readonly botId: string;
+  readonly userId: string;
+  readonly groupId?: string;
+  readonly correlationId?: string;
+  readonly conversationKey: string;
+  readonly conversationState: unknown;
+  readonly memory?: {
+    readonly facts: readonly unknown[];
+  };
+  readonly facts?: readonly unknown[];
+  readonly history: readonly unknown[];
+  readonly logger: unknown;
+  readonly metrics: unknown;
+  readonly abortSignal?: AbortSignal;
+  readonly plannerState?: Readonly<Record<string, unknown>>;
+}
+
+/**
+ * Phase 3A - Immutable request snapshot shared by every runtime component.
+ * Request state is copied and recursively frozen; service dependencies remain
+ * interface references so they can be invoked by downstream components.
  */
 export interface ExecutionContext {
+  readonly requestId: string;
+  readonly correlationId: string;
+  readonly userId: string;
+  readonly groupId?: string;
   readonly metadata: {
     readonly requestId: string;
+    readonly correlationId: string;
     readonly timestamp: number;
   };
   readonly user: {
@@ -86,16 +132,19 @@ export interface ExecutionContext {
   };
   readonly conversation: {
     readonly key: string;
-    readonly state: any; // Type to be refined based on ConversationState
+    readonly state: unknown;
   };
+  readonly history: readonly unknown[];
   readonly memory: {
-    readonly facts: any[]; // Type to be refined based on Fact[]
-    readonly history: any[]; // Type to be refined based on Message[]
+    readonly facts: readonly unknown[];
+    readonly history: readonly unknown[];
   };
-  readonly plannerState?: Record<string, unknown>;
+  readonly plannerState?: Readonly<Record<string, unknown>>;
   readonly abortSignal: AbortSignal;
-  readonly logger: any; // Structured logger instance
-  readonly metrics: any; // Metrics emitter instance
+  readonly logger: unknown;
+  readonly metrics: unknown;
+  readonly clock: ExecutionContextClock;
+  readonly idGenerator: ExecutionContextIdGenerator;
 }
 
 export interface Tool<TArgs = unknown> {

@@ -1,59 +1,77 @@
-import { v4 as uuidv4 } from 'uuid';
-import type { ExecutionContext } from "./types.js";
+import type {
+  ExecutionContext,
+  ExecutionContextDependencies,
+  ExecutionContextInput,
+} from "./types.js";
+
+const DEFAULT_ABORT_SIGNAL = new AbortController().signal;
+
+function deepFreeze<T>(value: T, seen = new WeakSet<object>()): T {
+  if (value === null || typeof value !== "object") {
+    return value;
+  }
+
+  const objectValue = value as object;
+  if (seen.has(objectValue)) {
+    return value;
+  }
+
+  seen.add(objectValue);
+
+  for (const key of Reflect.ownKeys(objectValue)) {
+    const descriptor = Object.getOwnPropertyDescriptor(objectValue, key);
+    if (descriptor && "value" in descriptor) {
+      deepFreeze(descriptor.value, seen);
+    }
+  }
+
+  return Object.freeze(objectValue) as T;
+}
+
+function immutableSnapshot<T>(value: T): T {
+  return deepFreeze(structuredClone(value));
+}
 
 /**
- * Factory to create a new immutable ExecutionContext.
- * This is the stable contract that every Phase 3A runtime component depends on.
+ * Creates the immutable request snapshot shared by the Phase 3A runtime.
+ * Time and identity are supplied by the caller so a recorded dependency set
+ * reproduces the same context during replay.
  */
-export function createExecutionContext(params: {
-  botId: string;
-  userId: string;
-  groupId?: string;
-  conversationKey: string;
-  conversationState: any;
-  facts: any[];
-  history: any[];
-  logger: any;
-  metrics: any;
-  abortSignal?: AbortSignal;
-  plannerState?: Record<string, unknown>;
-}): ExecutionContext {
-  const {
-    botId,
-    userId,
-    groupId,
-    conversationKey,
-    conversationState,
-    facts,
-    history,
-    logger,
-    metrics,
-    abortSignal = new AbortController().signal,
-    plannerState,
-  } = params;
+export function createExecutionContext(
+  input: ExecutionContextInput,
+  dependencies: ExecutionContextDependencies,
+): ExecutionContext {
+  const requestId = dependencies.idGenerator.next();
+  const timestamp = dependencies.clock.now();
+  const correlationId = input.correlationId ?? requestId;
+  const history = immutableSnapshot(input.history);
+  const facts = immutableSnapshot(input.memory?.facts ?? input.facts ?? []);
+  const conversationState = immutableSnapshot(input.conversationState);
+  const plannerState = input.plannerState
+    ? immutableSnapshot(input.plannerState)
+    : undefined;
 
-  // Use Object.freeze to ensure immutability at runtime
-  return Object.freeze({
-    metadata: Object.freeze({
-      requestId: uuidv4(),
-      timestamp: Date.now(),
-    }),
-    user: Object.freeze({
-      id: userId,
-      botId: botId,
-    }),
-    group: groupId ? Object.freeze({ id: groupId }) : undefined,
+  const context: ExecutionContext = {
+    requestId,
+    correlationId,
+    userId: input.userId,
+    groupId: input.groupId,
+    metadata: Object.freeze({ requestId, correlationId, timestamp }),
+    user: Object.freeze({ id: input.userId, botId: input.botId }),
+    group: input.groupId ? Object.freeze({ id: input.groupId }) : undefined,
     conversation: Object.freeze({
-      key: conversationKey,
-      state: Object.freeze(conversationState),
+      key: input.conversationKey,
+      state: conversationState,
     }),
-    memory: Object.freeze({
-      facts: Object.freeze([...facts]),
-      history: Object.freeze([...history]),
-    }),
-    plannerState: plannerState ? Object.freeze({ ...plannerState }) : undefined,
-    abortSignal,
-    logger,
-    metrics,
-  });
+    history,
+    memory: Object.freeze({ facts, history }),
+    plannerState,
+    abortSignal: input.abortSignal ?? DEFAULT_ABORT_SIGNAL,
+    logger: input.logger,
+    metrics: input.metrics,
+    clock: dependencies.clock,
+    idGenerator: dependencies.idGenerator,
+  };
+
+  return Object.freeze(context);
 }
