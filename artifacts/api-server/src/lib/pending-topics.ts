@@ -194,6 +194,22 @@ export async function closeAllTopics(botId: string, userId: string): Promise<voi
   }
 }
 
+/**
+ * Closes ALL open topics for a bot — used by factory reset.
+ */
+export async function closeAllTopicsForBot(botId: string): Promise<void> {
+  try {
+    const sql = getSql();
+    await sql`
+      UPDATE pending_topics
+      SET status = 'closed', closed_at = NOW()
+      WHERE bot_id = ${botId} AND status = 'open'
+    `;
+  } catch (err) {
+    logger.error({ err }, "Failed to close all topics for bot");
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Expiry sweep — marks open topics older than TOPIC_EXPIRY_DAYS as 'expired'.
 // Runs daily so stale threads from users who never finished a story don't

@@ -6,6 +6,7 @@ import {
   getHistory,
   appendMessages,
   resetConversation,
+  resetAllConversations,
   type Message,
 } from "../lib/conversation-store.js";
 import { routeTool, type ToolContext } from "../lib/tools/registry.js";
@@ -14,12 +15,14 @@ import {
   saveFacts,
   getFacts,
   formatFactsForPrompt,
+  deleteAllFacts,
 } from "../lib/user-memory.js";
 import {
   getOpenTopics,
   savePendingTopic,
   closeTopic,
   closeAllTopics,
+  closeAllTopicsForBot,
   classifyImportance,
   type PendingTopic,
 } from "../lib/pending-topics.js";
@@ -990,19 +993,39 @@ router.post("/", requireApiKey, rateLimit, handleChat);
 
 router.delete("/", requireApiKey, async (req: Request, res: Response) => {
   const body    = { ...req.query, ...(req.body as Record<string, unknown>) } as Record<string, string>;
-  const userId  = body["userId"]?.trim();
+  const userId  = body["userId"]?.trim() || null;
   const groupId = body["groupId"]?.trim() || undefined;
 
+  req.log.info(
+    {
+      mode:        userId ? "single-user" : "global-wipe",
+      userId:      userId  ?? "(not provided — global wipe)",
+      groupId:     groupId ?? "(not provided)",
+      contentType: req.headers["content-type"] ?? "(none)",
+    },
+    "DELETE /v1/chat",
+  );
+
+  // ── Global wipe: no userId → clear ALL conversations for this bot ──────────
+  // This is what chatbot.js calls via clearRemoteHistory(null, null) on factory reset.
   if (!userId) {
-    res.status(400).json({ success: false, error: "userId is required" });
+    const [deleted] = await Promise.all([
+      resetAllConversations(req.botId),
+      closeAllTopicsForBot(req.botId),
+      deleteAllFacts(req.botId),
+    ]);
+    req.log.info({ botId: req.botId, deletedConversations: deleted }, "DELETE /v1/chat → global wipe complete");
+    res.json({ success: true, message: "All conversations reset", botId: req.botId, deleted });
     return;
   }
 
+  // ── Single-user reset ──────────────────────────────────────────────────────
   const convKey = buildConversationKey(req.botId, userId, groupId);
   await Promise.all([
     resetConversation(convKey),
     closeAllTopics(req.botId, userId),
   ]);
+  req.log.info({ botId: req.botId, userId, convKey }, "DELETE /v1/chat → single-user reset complete");
   res.json({ success: true, message: "Conversation reset", conversationKey: convKey });
 });
 

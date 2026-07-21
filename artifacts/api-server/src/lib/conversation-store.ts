@@ -91,6 +91,13 @@ export async function resetConversation(key: string): Promise<void> {
   await sql`DELETE FROM conversations WHERE conversation_key = ${key}`;
 }
 
+/** Wipe ALL conversations for a bot — used by factory reset. */
+export async function resetAllConversations(botId: string): Promise<number> {
+  const sql = getSql();
+  const result = await sql`DELETE FROM conversations WHERE bot_id = ${botId}`;
+  return result.count;
+}
+
 export async function runCleanup(): Promise<void> {
   try {
     const sql = getSql();

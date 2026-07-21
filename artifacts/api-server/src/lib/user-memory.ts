@@ -140,6 +140,18 @@ export async function saveFacts(
   }
 }
 
+/** Delete ALL facts for a bot — used by factory reset. */
+export async function deleteAllFacts(botId: string): Promise<number> {
+  try {
+    const sql = getSql();
+    const result = await sql`DELETE FROM user_facts WHERE bot_id = ${botId}`;
+    return result.count;
+  } catch (err) {
+    logger.error({ err, botId }, "Failed to delete all facts for bot");
+    return 0;
+  }
+}
+
 export async function getFacts(
   botId: string,
   userId: string,
