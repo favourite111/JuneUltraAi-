@@ -196,13 +196,14 @@ export interface ToolConfidence {
 }
 
 export interface AgentPlanStep {
-  type: "tool_call" | "llm_reasoning" | "user_interaction";
-  toolId?: string;
-  toolArgs?: Record<string, unknown>;
-  llmPrompt?: string;
+  stepId: string;
+  capabilityId: string;
+  inputs: Record<string, unknown>;
+  expectedOutputs: Record<string, unknown>;
 }
 
 export interface AgentPlan {
+  planId: string;
   goal: string;
   steps: AgentPlanStep[];
 }
