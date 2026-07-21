@@ -53,3 +53,28 @@ export function textResult(reply: string, data: Record<string, unknown> = {}): T
 export function imageResult(reply: string, data: Record<string, unknown>): ToolResult {
   return { type: "image", reply, data };
 }
+
+/**
+ * Recursively freezes an object to ensure immutability.
+ * @param obj The object to deep freeze.
+ * @returns The deep frozen object.
+ */
+export function deepFreeze<T>(obj: T): T {
+  if (obj === null || typeof obj !== 'object' || Object.isFrozen(obj)) {
+    return obj;
+  }
+
+  if (Array.isArray(obj)) {
+    for (const item of obj) {
+      deepFreeze(item);
+    }
+  } else {
+    for (const key in obj) {
+      if (Object.prototype.hasOwnProperty.call(obj, key)) {
+        deepFreeze(obj[key]);
+      }
+    }
+  }
+
+  return Object.freeze(obj);
+}

@@ -62,10 +62,10 @@ export interface ToolManifest {
  */
 export interface ScorableToolManifest extends ToolManifest {
   /**
-   * Returns a deterministic confidence score (0.0-1.0) for how well this tool
+   * Returns a deterministic confidence score (0.0-1.0) and reasoning for how well this tool
    * matches the given text, without executing the tool.
    */
-  score(text: string): number;
+  score(text: string): ToolConfidence;
 }
 
 /**
@@ -155,7 +155,7 @@ export interface Tool<TArgs = unknown> {
   /** Optional manifest for Phase 2 tools. */
   manifest?: ToolManifest;
   /** Optional score method for Phase 3A. */
-  score?(text: string): number;
+  score?(text: string): ToolConfidence;
   /**
    * Returns extracted arguments if this tool applies to the message,
    * or null if it doesn't.
@@ -192,7 +192,7 @@ export interface EventBus {
 
 export interface ToolConfidence {
   score: number;
-  reasoning?: string;
+  reasoning: string[];
 }
 
 export interface AgentPlanStep {

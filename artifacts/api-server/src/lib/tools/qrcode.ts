@@ -86,7 +86,12 @@ export const qrCodeTool: Tool<QrCodeArgs> = {
   name: manifest.id,
   description: manifest.description,
   manifest,
-  score: (text: string) => (match(text) ? 0.98 : 0),
+  score: (text: string) => {
+    if (match(text)) {
+      return { score: 0.98, reasoning: ["Text matches QR code generation pattern"] };
+    }
+    return { score: 0, reasoning: ["Text does not match QR code generation pattern"] };
+  },
   match,
   execute,
 };

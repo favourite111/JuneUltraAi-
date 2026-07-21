@@ -47,30 +47,39 @@ export interface RoutedTool {
  * In Phase 3A, routing remains deterministic.
  */
 export function routeTool(text: string): RoutedTool | null {
-  for (const tool of legacyRegistry) {
-    // Phase 3A: Check if tool has a custom score method
-    let score = 0;
-    if (tool.score) {
-      score = tool.score(text);
-    }
+  const candidates: RoutedTool[] = [];
 
+  for (const tool of legacyRegistry) {
     const args = tool.match(text);
     if (args !== null) {
-      // If match() succeeds but no score() is provided, default to high confidence
-      // to preserve legacy behavior.
-      const finalScore = tool.score ? score : 0.95;
+      let confidence: ToolConfidence;
+      if (tool.score) {
+        confidence = tool.score(text);
+      } else {
+        // Legacy fallback for tools without a score method
+        confidence = { score: 0.95, reasoning: ["Deterministic regex match (legacy fallback)"] };
+      }
 
-      return {
-        tool,
-        args,
-        confidence: {
-          score: finalScore,
-          reasoning: tool.score ? "Calculated via tool.score()" : "Deterministic regex match (legacy fallback)",
-        },
-      };
+      // Only consider tools with a positive confidence score
+      if (confidence.score > 0) {
+        candidates.push({
+          tool,
+          args,
+          confidence,
+        });
+      }
     }
   }
-  return null;
+
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  // Sort candidates by confidence score in descending order
+  candidates.sort((a, b) => b.confidence.score - a.confidence.score);
+
+  // Return the highest confidence tool
+  return candidates[0];
 }
 
 export type {

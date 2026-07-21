@@ -49,4 +49,10 @@ export const urlShortenerTool: Tool<UrlShortenerArgs> = {
   description: "Shortens a long URL using TinyURL",
   match,
   execute,
+  score: (text: string) => {
+    if (match(text)) {
+      return { score: 0.95, reasoning: ["Text matches URL shortening pattern"] };
+    }
+    return { score: 0, reasoning: ["Text does not match URL shortening pattern"] };
+  },
 };

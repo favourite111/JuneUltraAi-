@@ -1,5 +1,6 @@
 import { EventEmitter } from "events";
 import type { EventBus, AgentEvent } from "./types.js";
+import { deepFreeze } from "./utils.js";
 
 /**
  * Implementation of the Phase 3A Event Bus.
@@ -18,13 +19,15 @@ export class AgentEventBus implements EventBus {
    * In Phase 3A, every event must include the ExecutionContext.
    */
   emit(event: AgentEvent): void {
-    this.emitter.emit(event.type, event);
+    // Deep freeze the event to ensure immutability
+    const frozenEvent = deepFreeze(event);
+    this.emitter.emit(frozenEvent.type, frozenEvent);
   }
 
   /**
    * Subscribes to an agent event.
    */
-  on(eventType: AgentEvent["type"], listener: (event: AgentEvent) => void): void {
+  subscribe(eventType: AgentEvent["type"], listener: (event: AgentEvent) => void): void {
     this.emitter.on(eventType, listener);
   }
 
@@ -38,7 +41,7 @@ export class AgentEventBus implements EventBus {
   /**
    * Unsubscribes from an agent event.
    */
-  off(eventType: AgentEvent["type"], listener: (event: AgentEvent) => void): void {
+  unsubscribe(eventType: AgentEvent["type"], listener: (event: AgentEvent) => void): void {
     this.emitter.off(eventType, listener);
   }
 }
