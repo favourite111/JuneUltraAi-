@@ -106,6 +106,8 @@ export interface ExecutionContextInput {
   readonly metrics: unknown;
   readonly abortSignal?: AbortSignal;
   readonly plannerState?: Readonly<Record<string, unknown>>;
+  /** Optional lifecycle event bus injected by the runtime composition root. */
+  readonly eventBus?: EventBus;
 }
 
 /**
@@ -145,6 +147,12 @@ export interface ExecutionContext {
   readonly metrics: unknown;
   readonly clock: ExecutionContextClock;
   readonly idGenerator: ExecutionContextIdGenerator;
+  /**
+   * Optional lifecycle event bus supplied by the runtime composition root.
+   * It remains optional so legacy callers can continue constructing contexts
+   * without adopting the Phase 3A pipeline in the same change.
+   */
+  readonly eventBus?: EventBus;
 }
 
 export interface Tool<TArgs = unknown> {

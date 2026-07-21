@@ -71,6 +71,7 @@ export function createExecutionContext(
     metrics: input.metrics,
     clock: dependencies.clock,
     idGenerator: dependencies.idGenerator,
+    eventBus: input.eventBus,
   };
 
   return Object.freeze(context);

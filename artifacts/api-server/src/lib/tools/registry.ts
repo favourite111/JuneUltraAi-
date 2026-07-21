@@ -91,7 +91,6 @@ export type {
   ToolConfidence,
   AgentPlanStep,
   AgentPlan,
-  AgentReflection,
   ToolError,
   ToolRegistryMetrics,
   RegistryHealth,

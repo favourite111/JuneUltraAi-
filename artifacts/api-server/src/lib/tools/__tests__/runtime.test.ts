@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createExecutionContext } from "../context.js";
 import { AgentEventBus } from "../event-bus.js";
 import { routeTool } from "../registry.js";
@@ -10,7 +10,7 @@ const runtimeDependencies = {
 
 describe("Agent Runtime - Phase 3A", () => {
   describe("Milestone 1: Execution Context", () => {
-    it("should create an immutable execution context", () => {
+    it("creates an immutable execution context", () => {
       const context = createExecutionContext({
         botId: "bot-123",
         userId: "user-456",
@@ -23,7 +23,7 @@ describe("Agent Runtime - Phase 3A", () => {
       }, runtimeDependencies);
 
       expect(context.user.id).toBe("user-456");
-      expect(context.metadata.requestId).toBeDefined();
+      expect(context.metadata.requestId).toBe("runtime-test-request-id");
       expect(Object.isFrozen(context)).toBe(true);
       expect(Object.isFrozen(context.metadata)).toBe(true);
       expect(Object.isFrozen(context.user)).toBe(true);
@@ -31,7 +31,7 @@ describe("Agent Runtime - Phase 3A", () => {
   });
 
   describe("Milestone 2: Event Bus", () => {
-    it("should emit and receive events with context", () => {
+    it("emits and receives events with context", () => {
       const eventBus = new AgentEventBus();
       const context = createExecutionContext({
         botId: "bot-123",
@@ -43,38 +43,42 @@ describe("Agent Runtime - Phase 3A", () => {
         logger: {},
         metrics: {},
       }, runtimeDependencies);
-
       const listener = vi.fn();
-      eventBus.on("tool.started", listener);
 
+      eventBus.on("tool.started", listener);
       eventBus.emit({
         type: "tool.started",
         context,
-        payload: { toolId: "qrcode", timestamp: Date.now() },
+        payload: { toolId: "qrcode", timestamp: 1_725_000_000_001 },
       });
 
       expect(listener).toHaveBeenCalledTimes(1);
-      expect(listener.mock.calls[0][0].context.metadata.requestId).toBe(context.metadata.requestId);
+      expect(listener.mock.calls[0]![0].context.metadata.requestId)
+        .toBe(context.metadata.requestId);
     });
   });
 
   describe("Milestone 3: Capability Router", () => {
-    it("should return a confidence score for matched tools", () => {
+    it("returns a confidence score for matched tools", () => {
       const result = routeTool("generate a qr code for https://example.com");
-      
+
       expect(result).not.toBeNull();
       expect(result?.tool.name).toBe("qrcode");
-      expect(result?.confidence.score).toBe(0.98);
-      expect(result?.confidence.reasoning).toBe("Calculated via tool.score()");
+      expect(result?.confidence).toEqual({
+        score: 0.98,
+        reasoning: ["Text matches QR code generation pattern"],
+      });
     });
 
-    it("should fallback to legacy confidence for tools without score()", () => {
+    it("returns the URL-shortener score from its deterministic matcher", () => {
       const result = routeTool("shorten https://google.com");
-      
+
       expect(result).not.toBeNull();
       expect(result?.tool.name).toBe("url_shortener");
-      expect(result?.confidence.score).toBe(0.95);
-      expect(result?.confidence.reasoning).toBe("Deterministic regex match (legacy fallback)");
+      expect(result?.confidence).toEqual({
+        score: 0.95,
+        reasoning: ["Text matches URL shortening pattern"],
+      });
     });
   });
 });

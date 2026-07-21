@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { Router, type IRouter, type Request, type Response } from "express";
 import { requireApiKey } from "../middlewares/auth.js";
 import { rateLimit } from "../middlewares/rate-limit.js";
@@ -9,7 +10,7 @@ import {
   resetAllConversations,
   type Message,
 } from "../lib/conversation-store.js";
-import { routeTool, type ToolContext } from "../lib/tools/registry.js";
+import { createDeterministicAgentRuntime } from "../lib/tools/runtime.js";
 import {
   extractFacts,
   saveFacts,
@@ -31,6 +32,14 @@ const router: IRouter = Router();
 
 const SHIZO_API = "https://api.shizo.top/ai/gpt";
 const SHIZO_KEY = "shizo";
+
+// The composition root owns non-deterministic production providers. The
+// runtime itself receives them only through dependency injection, enabling
+// deterministic recordings and replay tests with alternate providers.
+const deterministicToolRuntime = createDeterministicAgentRuntime({
+  clock: { now: () => Date.now() },
+  idGenerator: { next: () => randomUUID() },
+});
 
 // ---------------------------------------------------------------------------
 // Limits
@@ -815,39 +824,52 @@ async function handleChat(req: Request, res: Response): Promise<void> {
   const botId   = req.botId;
   const convKey = buildConversationKey(botId, userId, groupId);
 
-  const routed = routeTool(prompt);
-  if (routed) {
-    const ctx: ToolContext = { botId, userId, groupId };
+  const runtimeResponse = await deterministicToolRuntime.execute({
+    prompt,
+    botId,
+    userId,
+    groupId,
+    conversationKey: convKey,
+    conversationState: {},
+    history: [],
+    memory: { facts: [] },
+    logger: req.log,
+    metrics: {},
+  });
 
-    try {
-      const result = await routed.tool.execute(routed.args, ctx);
+  if (runtimeResponse.status === "completed") {
+    const { result, tool } = runtimeResponse;
+    const now = Math.floor(Date.now() / 1000);
+    const newMessages: Message[] = [
+      { role: "user",      speaker: userId, content: prompt,       ts: now },
+      { role: "assistant", speaker: "june", content: result.reply, ts: now },
+    ];
+    await appendMessages(convKey, botId, userId, groupId, newMessages);
 
-      const now = Math.floor(Date.now() / 1000);
-      const newMessages: Message[] = [
-        { role: "user",      speaker: userId, content: prompt,       ts: now },
-        { role: "assistant", speaker: "june", content: result.reply, ts: now },
-      ];
-      await appendMessages(convKey, botId, userId, groupId, newMessages);
+    res.json({
+      success: true,
+      handledBy: "tool",
+      tool: tool.name,
+      type: result.type,
+      reply: result.reply,
+      data: result.data,
+      conversationKey: convKey,
+    });
+    return;
+  }
 
-      res.json({
-        success: true,
-        handledBy: "tool",
-        tool: routed.tool.name,
-        type: result.type,
-        reply: result.reply,
-        data: result.data,
-        conversationKey: convKey,
-      });
-    } catch (err) {
-      req.log.error({ err, tool: routed.tool.name }, "Tool execution failed");
-      res.status(502).json({
-        success: false,
-        handledBy: "tool",
-        tool: routed.tool.name,
-        error: "Tool execution failed",
-        reply: "Couldn't get that done right now 😩 try again in a bit",
-      });
-    }
+  if (runtimeResponse.status === "failed") {
+    req.log.error(
+      { error: runtimeResponse.error, tool: runtimeResponse.tool.name },
+      "Tool execution failed",
+    );
+    res.status(502).json({
+      success: false,
+      handledBy: "tool",
+      tool: runtimeResponse.tool.name,
+      error: "Tool execution failed",
+      reply: "Couldn't get that done right now 😩 try again in a bit",
+    });
     return;
   }
 

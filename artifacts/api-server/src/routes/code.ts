@@ -4,11 +4,11 @@
  * Serves the latest chatbot.js fetched from GitHub.
  * Bots hit this after receiving an UPDATE event on the /updates SSE stream.
  */
-import { Router, type Request, type Response } from "express";
+import { Router, type IRouter, type Request, type Response } from "express";
 import { timingSafeEqual } from "node:crypto";
 import { getCachedCode, getCachedHash, getCachedVersion } from "../lib/github-poller.js";
 
-const router = Router();
+const router: IRouter = Router();
 
 const DELIVERY_KEY = process.env["CODE_DELIVERY_KEY"] ?? "";
 

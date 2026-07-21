@@ -43,7 +43,7 @@ export function createReflectionEngine(ctx: ExecutionContext) {
       const timestamp = ctx.clock.now();
 
       // Emit reflection.started event
-      ctx.eventBus.emit({
+      ctx.eventBus?.emit({
         type: "reflection.started",
         context: ctx,
         payload: {
@@ -79,7 +79,7 @@ export function createReflectionEngine(ctx: ExecutionContext) {
             ],
           };
           // Emit reflection.failed event for non-retryable or exhausted retries
-          ctx.eventBus.emit({
+          ctx.eventBus?.emit({
             type: "reflection.failed",
             context: ctx,
             payload: {
@@ -117,7 +117,7 @@ export function createReflectionEngine(ctx: ExecutionContext) {
             ],
           };
           // Emit reflection.failed event for mismatch
-          ctx.eventBus.emit({
+          ctx.eventBus?.emit({
             type: "reflection.failed",
             context: ctx,
             payload: {
@@ -134,7 +134,7 @@ export function createReflectionEngine(ctx: ExecutionContext) {
       }
 
       // Emit reflection.completed event
-      ctx.eventBus.emit({
+      ctx.eventBus?.emit({
         type: "reflection.completed",
         context: ctx,
         payload: {

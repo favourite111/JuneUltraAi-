@@ -8,7 +8,7 @@
  *   - { type: "update",  hash, version }  whenever a new chatbot.js is detected
  *   - ": heartbeat"  every 30 s (keeps the connection alive through proxies)
  */
-import { Router, type Request, type Response } from "express";
+import { Router, type IRouter, type Request, type Response } from "express";
 import { timingSafeEqual } from "node:crypto";
 import {
   addClient,
@@ -17,7 +17,7 @@ import {
   getCachedVersion,
 } from "../lib/github-poller.js";
 
-const router = Router();
+const router: IRouter = Router();
 
 const DELIVERY_KEY = process.env["CODE_DELIVERY_KEY"] ?? "";
 
