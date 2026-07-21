@@ -7,34 +7,36 @@ import { screenshotPromptTool } from "./screenshot-prompt.js";
 import { capabilitiesTool } from "./capabilities.js";
 
 /**
- * Every supported tool, in match priority order (checked top to bottom,
- * first match wins — deterministic, not AI-based). Only one tool runs
- * per message; if a message could plausibly match more than one tool,
- * put the more specific/less ambiguous one first.
+ * Phase 2 Tool Registry.
  *
- * Ordering rationale:
- * - Functional tools come first so actual requests (e.g. "screenshot of
- *   google.com") are always caught before the capabilities
- *   meta-handler sees them.
- * - `capabilitiesTool` is last: it catches "what can you do?" style questions
- *   only after every real tool has had a chance to claim the message.
- * - url_shortener and screenshot both require a link, but their trigger
- *   phrases don't overlap so they never compete for the same message.
- * - If a future tool's phrases could overlap with an existing one, order by
- *   most-specific / most-likely intent first, and leave a comment explaining
- *   the tie-break.
- *
- * To add a new tool: create a file in this directory exporting a `Tool`,
- * then add it here. The chat route never needs to change.
+ * Supports both legacy tools and new manifest-based tools.
+ * In a future phase, this will use dynamic filesystem discovery.
+ * For now, we maintain the explicit list to ensure backward compatibility
+ * and preserve the priority order.
  */
-const registry: Tool[] = [
+const legacyRegistry: Tool[] = [
   urlShortenerTool,
-  qrCodeTool,
+  qrCodeTool, // Refactored to include manifest, but still works here
   screenshotTool,
-  screenshotPromptTool, // fallback: screenshot intent but no URL → asks for one
+  screenshotPromptTool,
   textToPdfTool,
-  capabilitiesTool, // always last — catches capability queries after real tools
+  capabilitiesTool,
 ];
+
+/**
+ * Helper to get all tools that have a manifest.
+ * This is the first step toward dynamic discovery.
+ */
+export function getManifestTools(): Tool[] {
+  return legacyRegistry.filter((tool) => !!tool.manifest);
+}
+
+/**
+ * Helper to get all legacy tools (those without a manifest).
+ */
+export function getLegacyTools(): Tool[] {
+  return legacyRegistry.filter((tool) => !tool.manifest);
+}
 
 export interface RoutedTool {
   tool: Tool;
@@ -43,11 +45,13 @@ export interface RoutedTool {
 
 /**
  * Deterministically checks the message against every registered tool
- * and returns the first match, or null if no tool applies (the caller
- * should fall back to the normal AI conversation in that case).
+ * and returns the first match, or null if no tool applies.
+ *
+ * This remains the primary entry point for the chat route, ensuring
+ * zero breaking changes to the existing flow.
  */
 export function routeTool(text: string): RoutedTool | null {
-  for (const tool of registry) {
+  for (const tool of legacyRegistry) {
     const args = tool.match(text);
     if (args !== null) {
       return { tool, args };
@@ -56,4 +60,4 @@ export function routeTool(text: string): RoutedTool | null {
   return null;
 }
 
-export type { Tool, ToolContext, ToolResult, ToolResponseType } from "./types.js";
+export type { Tool, ToolContext, ToolResult, ToolResponseType, ToolManifest, ToolConfidence, AgentPlanStep, AgentPlan, AgentReflection, ToolError, ToolRegistryMetrics, RegistryHealth } from "./types.js";

@@ -1,5 +1,6 @@
 import type { Tool, ToolResult } from "./types.js";
 import { containsAnyPhrase, textResult } from "./utils.js";
+import { getManifestTools } from "./registry.js";
 
 /**
  * Capabilities tool — answers "what can you do?" and similar questions
@@ -45,28 +46,36 @@ const TRIGGER_PHRASES = [
   "can you generate a qr",
 ] as const;
 
-const CAPABILITIES_REPLY = `Here's what I can do 😎
-
-🔗 *URL Shortener* — shorten long links
-  → "shorten https://yourlink.com"
-
-📸 *Website Screenshot* — capture any webpage
-  → "screenshot of https://example.com"
-
-📄 *Text to PDF* — convert text into a PDF file
-  → "convert to pdf: your text here"
-
-🔲 *QR Code* — generate a QR code from any text or link
-  → "qr code for https://example.com"
-
-Just send the right phrase and I'll handle the rest 💪`;
-
 function match(text: string): Record<string, never> | null {
   return containsAnyPhrase(text, TRIGGER_PHRASES) ? {} : null;
 }
 
 async function execute(): Promise<ToolResult> {
-  return textResult(CAPABILITIES_REPLY, {});
+  const manifestTools = getManifestTools();
+  
+  let reply = "Here's what I can do 😎\n\n";
+  
+  // Dynamically list tools that have manifests (Phase 2)
+  for (const tool of manifestTools) {
+    const m = tool.manifest!;
+    reply += `*${m.name}* — ${m.description}\n`;
+    if (m.examples.length > 0) {
+      reply += `  → "${m.examples[0]}"\n`;
+    }
+    reply += "\n";
+  }
+
+  // Fallback for legacy tools not yet refactored
+  reply += "🔗 *URL Shortener* — shorten long links\n";
+  reply += "  → \"shorten https://yourlink.com\"\n\n";
+  reply += "📸 *Website Screenshot* — capture any webpage\n";
+  reply += "  → \"screenshot of https://example.com\"\n\n";
+  reply += "📄 *Text to PDF* — convert text into a PDF file\n";
+  reply += "  → \"convert to pdf: your text here\"\n\n";
+
+  reply += "Just send the right phrase and I'll handle the rest 💪";
+
+  return textResult(reply, {});
 }
 
 export const capabilitiesTool: Tool<Record<string, never>> = {
