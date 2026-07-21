@@ -11,7 +11,7 @@ import { capabilitiesTool } from "./capabilities.js";
  *
  * Supports both legacy tools and new manifest-based tools.
  */
-const legacyRegistry: Tool[] = [
+const initialTools: Tool[] = [
   urlShortenerTool,
   qrCodeTool,
   screenshotTool,
@@ -21,17 +21,34 @@ const legacyRegistry: Tool[] = [
 ];
 
 /**
- * Helper to get all tools that have a manifest.
+ * Phase 3A/3B Tool Registry.
+ *
+ * Supports both legacy tools and new manifest-based tools.
  */
-export function getManifestTools(): Tool[] {
-  return legacyRegistry.filter((tool) => !!tool.manifest);
-}
+export class ToolRegistry {
+  private static tools: Map<string, Tool> = new Map(
+    initialTools.map((tool) => [tool.name, tool])
+  );
 
-/**
- * Helper to get all legacy tools (those without a manifest).
- */
-export function getLegacyTools(): Tool[] {
-  return legacyRegistry.filter((tool) => !tool.manifest);
+  static register(tool: Tool): void {
+    this.tools.set(tool.name, tool);
+  }
+
+  static getTool(name: string): Tool | undefined {
+    return this.tools.get(name);
+  }
+
+  static listTools(): Tool[] {
+    return Array.from(this.tools.values());
+  }
+
+  static getManifestTools(): Tool[] {
+    return this.listTools().filter((tool) => !!tool.manifest);
+  }
+
+  static getLegacyTools(): Tool[] {
+    return this.listTools().filter((tool) => !tool.manifest);
+  }
 }
 
 export interface RoutedTool {
@@ -49,7 +66,7 @@ export interface RoutedTool {
 export function routeTool(text: string): RoutedTool | null {
   const candidates: RoutedTool[] = [];
 
-  for (const tool of legacyRegistry) {
+  for (const tool of ToolRegistry.listTools()) {
     const args = tool.match(text);
     if (args !== null) {
       let confidence: ToolConfidence;
@@ -80,6 +97,17 @@ export function routeTool(text: string): RoutedTool | null {
 
   // Return the highest confidence tool
   return candidates[0];
+}
+
+/**
+ * Legacy exports for backward compatibility.
+ */
+export function getManifestTools(): Tool[] {
+  return ToolRegistry.getManifestTools();
+}
+
+export function getLegacyTools(): Tool[] {
+  return ToolRegistry.getLegacyTools();
 }
 
 export type {

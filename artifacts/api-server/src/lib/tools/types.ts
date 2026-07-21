@@ -187,7 +187,10 @@ export type AgentEvent =
   | { type: "tool.failed"; context: ExecutionContext; payload: { toolId: string; error: ToolError; timestamp: number; } }
   | { type: "reflection.started"; context: ExecutionContext; payload: { observation: ToolResult | ToolError; currentPlanStep: AgentPlanStep; timestamp: number; } }
   | { type: "reflection.completed"; context: ExecutionContext; payload: { decision: ReflectionDecision; timestamp: number; } }
-  | { type: "reflection.failed"; context: ExecutionContext; payload: { error: ToolError; timestamp: number; } };
+  | { type: "reflection.failed"; context: ExecutionContext; payload: { error: ToolError; timestamp: number; } }
+  | { type: "llm.request"; context: ExecutionContext; payload: { prompt: string; options?: ModelCallOptions; timestamp: number; } }
+  | { type: "llm.response"; context: ExecutionContext; payload: { response: ModelResponse; timestamp: number; } }
+  | { type: "llm.decision"; context: ExecutionContext; payload: { decision: LLMDecision; timestamp: number; } };
 
 
 /**

@@ -3,7 +3,7 @@ import { AgentEventBus } from "./event-bus.js";
 import { createToolExecutor } from "./executor.js";
 import { createPlanner } from "./planner.js";
 import { createReflectionEngine } from "./reflection.js";
-import { routeTool, type RoutedTool } from "./registry.js";
+import { routeTool, type RoutedTool, ToolRegistry } from "./registry.js";
 import type {
   AgentPlan,
   EventBus,
@@ -19,11 +19,16 @@ import type {
 
 export type CapabilityRouter = (prompt: string) => RoutedTool | null;
 
+import { ModelProvider, PromptManager, LLMDecision, DEFAULT_CONFIDENCE_THRESHOLDS } from "./types.js";
+
 export interface AgentRuntimeDependencies extends ExecutionContextDependencies {
   /** A request-isolated or explicitly shared lifecycle bus. */
   readonly eventBus?: EventBus;
   /** Injectable deterministic router used by tests and alternative composition roots. */
   readonly router?: CapabilityRouter;
+  readonly modelProvider?: ModelProvider;
+  readonly promptManager?: PromptManager;
+  readonly confidenceThresholds?: typeof DEFAULT_CONFIDENCE_THRESHOLDS;
 }
 
 export interface AgentRuntimeRequest extends ExecutionContextInput {
@@ -79,6 +84,9 @@ function reflectionFailure(decision: ReflectionDecision): ToolError {
 export function createDeterministicAgentRuntime(
   dependencies: AgentRuntimeDependencies,
 ) {
+  const configuredModelProvider = dependencies.modelProvider;
+  const configuredPromptManager = dependencies.promptManager;
+  const confidenceThresholds = dependencies.confidenceThresholds ?? DEFAULT_CONFIDENCE_THRESHOLDS;
   const configuredEventBus = dependencies.eventBus ?? new AgentEventBus();
   const router = dependencies.router ?? routeTool;
 
@@ -96,7 +104,56 @@ export function createDeterministicAgentRuntime(
         payload: { prompt: request.prompt, timestamp: context.clock.now() },
       });
 
-      const routed = router(request.prompt);
+      let routed = router(request.prompt);
+
+      // If deterministic router has low confidence, consult the LLM
+      if (!routed || routed.confidence.score < confidenceThresholds.routerMinConfidence) {
+        if (configuredModelProvider && configuredPromptManager) {
+          const availableTools = ToolRegistry.listTools();
+          const llmPrompt = configuredPromptManager.renderPrompt(context, availableTools);
+
+          eventBus.emit({
+            type: "llm.request",
+            context,
+            payload: { prompt: llmPrompt, timestamp: context.clock.now() },
+          });
+
+          const llmResponse = await configuredModelProvider.generate(llmPrompt);
+
+          eventBus.emit({
+            type: "llm.response",
+            context,
+            payload: { response: llmResponse, timestamp: context.clock.now() },
+          });
+
+          const llmDecision = configuredPromptManager.parseResponse(llmResponse.text);
+
+          eventBus.emit({
+            type: "llm.decision",
+            context,
+            payload: { decision: llmDecision, timestamp: context.clock.now() },
+          });
+
+          if (llmDecision.type === "tool_selection" && llmDecision.toolName && llmDecision.confidence && llmDecision.confidence >= confidenceThresholds.llmMinConfidence) {
+            const llmSelectedTool = ToolRegistry.getTool(llmDecision.toolName);
+            if (llmSelectedTool) {
+              routed = { tool: llmSelectedTool, args: llmDecision.toolArgs ?? {}, confidence: { score: llmDecision.confidence, reasoning: [llmDecision.reasoning] } };
+            } else {
+              // If LLM suggests a non-existent tool, treat as no capability
+              routed = null;
+            }
+          } else if (llmDecision.type === "clarification" && llmDecision.clarificationQuestion) {
+            // Handle clarification, for now, we'll just fail
+            return {
+              status: "failed",
+              context,
+              plan: { planId: context.requestId, goal: request.prompt, steps: [] },
+              tool: { name: "clarification", description: "Clarification needed", match: () => null, execute: async () => ({ type: "text", reply: "Clarification needed", data: {} }) },
+              error: { code: "CLARIFICATION_NEEDED", message: llmDecision.clarificationQuestion, isRetryable: false },
+            };
+          }
+        }
+      }
 
       eventBus.emit({
         type: "router.completed",
