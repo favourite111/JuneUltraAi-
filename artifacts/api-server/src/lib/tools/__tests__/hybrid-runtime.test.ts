@@ -164,6 +164,33 @@ describe("Hybrid Agent Runtime - Phase 3B Milestone 1", () => {
     expect(events.some(e => e.type === "llm.decision")).toBe(false);
   });
 
+  it("handles LLM no_action decision", async () => {
+    const { runtime: baseRuntime, events, eventBus } = createFixture(() => null, "req-5");
+
+    const modelProvider = new MockModelProvider([{ text: "no-action-response" }]);
+    const promptManager = new MockPromptManager([{
+      type: "no_action",
+      reasoning: "No suitable tool found",
+    }]);
+
+    const runtimeWithLLM = createDeterministicAgentRuntime({
+      clock: { now: () => 1_700_000_000_000 },
+      idGenerator: { next: () => "req-5" },
+      eventBus,
+      router: () => null,
+      modelProvider,
+      promptManager,
+      hybridConfig: { enabled: true },
+    });
+
+    const response = await runtimeWithLLM.execute(request("unsupported prompt"));
+
+    expect(response.status).toBe("no_capability");
+    expect(events.some(e => e.type === "llm.request")).toBe(true);
+    expect(events.some(e => e.type === "llm.response")).toBe(true);
+    expect(events.some(e => e.type === "llm.decision")).toBe(true);
+  });
+
   it("handles LLM clarification requests", async () => {
     const { runtime: baseRuntime, events, eventBus } = createFixture(() => null, "req-3");
 

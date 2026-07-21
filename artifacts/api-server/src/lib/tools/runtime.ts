@@ -152,6 +152,8 @@ export function createDeterministicAgentRuntime(
               tool: { name: "clarification", description: "Clarification needed", match: () => null, execute: async () => ({ type: "text", reply: "Clarification needed", data: {} }) },
               error: { code: "CLARIFICATION_NEEDED", message: llmDecision.clarificationQuestion, isRetryable: false },
             };
+          } else if (llmDecision.type === "no_action") {
+            routed = null; // LLM explicitly said no action
           }
         }
       }

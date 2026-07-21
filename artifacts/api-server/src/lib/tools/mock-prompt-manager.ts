@@ -1,28 +1,26 @@
-import type {
-  PromptManager,
-  ExecutionContext,
-  Tool,
-  LLMDecision,
-  ReflectionDecisionType,
-} from "./types.js";
+import type { ExecutionContext, LLMDecision, PromptManager, Tool } from "./types.js";
 
 export class MockPromptManager implements PromptManager {
-  private mockDecisions: LLMDecision[] = [];
-  private callCount = 0;
+  private responses: LLMDecision[];
 
-  constructor(mockDecisions: LLMDecision[] = []) {
-    this.mockDecisions = mockDecisions;
+  constructor(responses: LLMDecision[] = []) {
+    this.responses = responses;
   }
 
   renderPrompt(context: ExecutionContext, availableTools: Tool[]): string {
-    // For testing, we can just return a simple prompt or inspect the context/tools
-    return `User: ${context.user.id}, Prompt: ${context.conversation.state}, Tools: ${availableTools.map(t => t.name).join(', ')}`;
+    // For mock, we don't need to render a complex prompt, just return a placeholder
+    return "mock-prompt";
   }
 
   parseResponse(llmResponse: string): LLMDecision {
-    // For testing, return pre-configured decisions sequentially
-    const decision = this.mockDecisions[this.callCount % this.mockDecisions.length];
-    this.callCount++;
-    return decision;
+    if (this.responses.length > 0) {
+      return this.responses.shift()!;
+    }
+    // Fallback for unexpected calls
+    return {
+      type: "no_action",
+      reasoning: "MockPromptManager has no more responses",
+      confidence: 0,
+    };
   }
 }
