@@ -240,6 +240,53 @@ export interface ToolError {
   isRetryable: boolean;
 }
 
+export interface ModelProvider {
+  generate(prompt: string, options?: ModelCallOptions): Promise<ModelResponse>;
+  getMetadata(): ModelProviderMetadata;
+}
+
+export interface ModelCallOptions {
+  temperature?: number;
+  maxTokens?: number;
+  stopSequences?: string[];
+}
+
+export interface ModelResponse {
+  text: string;
+}
+
+export interface ModelProviderMetadata {
+  name: string;
+  models: Array<{ id: string; capabilities: string[] }>;
+}
+
+export interface PromptManager {
+  renderPrompt(context: ExecutionContext, availableTools: Tool[]): string;
+  parseResponse(llmResponse: string): LLMDecision;
+}
+
+export interface LLMDecision {
+  type: 'tool_selection' | 'clarification' | 'no_action' | 'reflection_override';
+  toolName?: string;
+  toolArgs?: Record<string, unknown>;
+  reasoning: string;
+  confidence?: number;
+  clarificationQuestion?: string;
+  reflectionOverride?: ReflectionDecisionType;
+}
+
+export interface ConfidenceThresholds {
+  routerMinConfidence: number;
+  llmMinConfidence: number;
+  clarificationThreshold: number;
+}
+
+export const DEFAULT_CONFIDENCE_THRESHOLDS: ConfidenceThresholds = {
+  routerMinConfidence: 0.7,
+  llmMinConfidence: 0.6,
+  clarificationThreshold: 0.4,
+};
+
 export interface ToolRegistryMetrics {
   totalTools: number;
   manifestTools: number;
