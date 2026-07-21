@@ -115,6 +115,11 @@ export interface ExecutionContextInput {
  * Request state is copied and recursively frozen; service dependencies remain
  * interface references so they can be invoked by downstream components.
  */
+export interface RuntimeMetrics {
+  record(name: string, value?: number, tags?: Record<string, string>): void;
+  getSnapshot(): Record<string, number>;
+}
+
 export interface ExecutionContext {
   readonly requestId: string;
   readonly correlationId: string;
@@ -144,7 +149,7 @@ export interface ExecutionContext {
   readonly plannerState?: Readonly<Record<string, unknown>>;
   readonly abortSignal: AbortSignal;
   readonly logger: unknown;
-  readonly metrics: unknown;
+  readonly metrics: RuntimeMetrics;
   readonly clock: ExecutionContextClock;
   readonly idGenerator: ExecutionContextIdGenerator;
   /**
@@ -236,8 +241,17 @@ export interface ReflectionDecision {
 }
 
 
+export type RuntimeErrorCode =
+  | "TIMEOUT"
+  | "RATE_LIMIT"
+  | "INVALID_RESPONSE"
+  | "NETWORK_ERROR"
+  | "UNKNOWN_ERROR"
+  | "CIRCUIT_OPEN"
+  | "VALIDATION_FAILED";
+
 export interface ToolError {
-  code: string;
+  code: string | RuntimeErrorCode;
   message: string;
   details?: Record<string, unknown>;
   isRetryable: boolean;
@@ -281,12 +295,19 @@ export interface LLMDecision {
   reflectionOverride?: ReflectionDecisionType;
 }
 
+export interface CircuitBreakerConfig {
+  failureThreshold: number;
+  cooldownPeriodMs: number;
+}
+
 export interface HybridConfig {
   enabled: boolean;
   modelProvider?: string;
   model?: string;
   timeout?: number;
   retryAttempts?: number;
+  circuitBreaker?: CircuitBreakerConfig;
+  metricsEnabled?: boolean;
 }
 
 export interface ConfidenceThresholds {

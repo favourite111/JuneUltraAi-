@@ -5,6 +5,7 @@ import {
   type AgentRuntimeRequest,
 } from "../runtime.js";
 import type { RoutedTool } from "../registry.js";
+import { MetricsCollector } from "../resilience.js";
 import type {
   AgentEvent,
   ExecutionContext,
@@ -44,8 +45,8 @@ function request(prompt = "run test capability"): AgentRuntimeRequest {
     history: [],
     memory: { facts: [] },
     logger: {},
-    metrics: {},
-  };
+    metrics: new MetricsCollector(),
+  } as any;
 }
 
 function routed(tool: Tool, args: Record<string, unknown> = { value: "input" }): RoutedTool {

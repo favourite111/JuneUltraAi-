@@ -41,8 +41,9 @@ export function createExecutionContext(
   input: ExecutionContextInput,
   dependencies: ExecutionContextDependencies,
 ): ExecutionContext {
+  const clock = (input as any).clock ?? dependencies.clock;
   const requestId = dependencies.idGenerator.next();
-  const timestamp = dependencies.clock.now();
+  const timestamp = clock.now();
   const correlationId = input.correlationId ?? requestId;
   const history = immutableSnapshot(input.history);
   const facts = immutableSnapshot(input.memory?.facts ?? input.facts ?? []);
@@ -69,7 +70,7 @@ export function createExecutionContext(
     abortSignal: input.abortSignal ?? DEFAULT_ABORT_SIGNAL,
     logger: input.logger,
     metrics: input.metrics,
-    clock: dependencies.clock,
+    clock: clock,
     idGenerator: dependencies.idGenerator,
     eventBus: input.eventBus,
   };

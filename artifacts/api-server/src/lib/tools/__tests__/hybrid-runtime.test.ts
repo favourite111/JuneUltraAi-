@@ -4,6 +4,7 @@ import { createDeterministicAgentRuntime } from "../runtime.js";
 import { MockModelProvider } from "../mock-model-provider.js";
 import { MockPromptManager } from "../mock-prompt-manager.js";
 import { ToolRegistry } from "../registry.js";
+import { MetricsCollector } from "../resilience.js";
 import type {
   AgentEvent,
   AgentRuntimeRequest,
@@ -65,7 +66,7 @@ function request(prompt = "run test capability"): AgentRuntimeRequest {
     history: [],
     memory: { facts: [] },
     logger: {},
-    metrics: {},
+    metrics: new MetricsCollector(),
   };
 }
 

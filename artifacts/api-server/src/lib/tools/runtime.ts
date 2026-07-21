@@ -19,7 +19,8 @@ import type {
 
 export type CapabilityRouter = (prompt: string) => RoutedTool | null;
 
-import { ModelProvider, PromptManager, LLMDecision, DEFAULT_CONFIDENCE_THRESHOLDS } from "./types.js";
+import { ModelProvider, PromptManager, LLMDecision, DEFAULT_CONFIDENCE_THRESHOLDS, ModelResponse } from "./types.js";
+import { DecisionValidator, normalizeError, CircuitBreaker, MetricsCollector } from "./resilience.js";
 
 export interface AgentRuntimeDependencies extends ExecutionContextDependencies {
   /** A request-isolated or explicitly shared lifecycle bus. */
@@ -90,6 +91,10 @@ export function createDeterministicAgentRuntime(
   const confidenceThresholds = dependencies.confidenceThresholds ?? DEFAULT_CONFIDENCE_THRESHOLDS;
   const configuredEventBus = dependencies.eventBus ?? new AgentEventBus();
   const router = dependencies.router ?? routeTool;
+  
+  const circuitBreaker = dependencies.hybridConfig?.circuitBreaker 
+    ? new CircuitBreaker(dependencies.hybridConfig.circuitBreaker, dependencies.clock)
+    : null;
 
   return {
     execute: async (request: AgentRuntimeRequest): Promise<AgentRuntimeResponse> => {
@@ -110,6 +115,19 @@ export function createDeterministicAgentRuntime(
       // If deterministic router has low confidence and hybrid intelligence is enabled, consult the LLM
       if ((!routed || routed.confidence.score < confidenceThresholds.routerMinConfidence) && dependencies.hybridConfig?.enabled) {
         if (configuredModelProvider && configuredPromptManager) {
+          context.metrics.record("llm_requests");
+
+          const breakerState = circuitBreaker?.getState(context.clock) ?? "CLOSED";
+          if (breakerState === "OPEN") {
+            context.metrics.record("circuit_breaker_skips");
+            eventBus.emit({
+              type: "router.completed",
+              context,
+              payload: { toolId: null, confidence: 0, timestamp: context.clock.now() },
+            });
+            return { status: "no_capability", context, plan: { planId: context.requestId, goal: request.prompt, steps: [] } };
+          }
+
           const availableTools = ToolRegistry.listTools();
           const llmPrompt = configuredPromptManager.renderPrompt(context, availableTools);
 
@@ -128,23 +146,29 @@ export function createDeterministicAgentRuntime(
                 model: dependencies.hybridConfig?.model,
                 timeout: dependencies.hybridConfig?.timeout,
               });
+              circuitBreaker?.recordSuccess();
+              context.metrics.record("llm_success");
               break; // Success, exit retry loop
-            } catch (error: any) {
-              if (error.name === "AbortError" || error.message === "AbortError") {
-                if (attempt === retryAttempts) {
-                  // All retries failed, break and leave llmResponse as null
-                  break;
-                }
-                // Otherwise, continue to next attempt
-              } else {
-                // Non-timeout error, break and leave llmResponse as null
-                break;
+            } catch (rawError: any) {
+              const normalized = normalizeError(rawError);
+              if (normalized.code === "TIMEOUT") context.metrics.record("llm_timeout");
+              
+              if (attempt < retryAttempts && normalized.isRetryable) {
+                context.metrics.record("llm_retries");
+                continue;
               }
+              
+              const wasOpen = circuitBreaker?.getState() === "OPEN";
+              circuitBreaker?.recordFailure();
+              if (circuitBreaker?.getState() === "OPEN" && !wasOpen) {
+                context.metrics.record("circuit_breaker_opens");
+              }
+              break;
             }
           }
 
           if (!llmResponse) {
-            // LLM failed or timed out, fall back to deterministic routing
+            context.metrics.record("fallback_count");
             routed = null;
           } else {
             eventBus.emit({
@@ -154,36 +178,40 @@ export function createDeterministicAgentRuntime(
             });
 
             const llmDecision = configuredPromptManager.parseResponse(llmResponse.text);
+            const validation = DecisionValidator.validate(llmDecision);
 
-            eventBus.emit({
-              type: "llm.decision",
-              context,
-              payload: { decision: llmDecision, timestamp: context.clock.now() },
-            });
+            if (!validation.isValid) {
+              context.metrics.record("llm_validation_failures");
+              context.metrics.record("fallback_count");
+              routed = null;
+            } else {
+              eventBus.emit({
+                type: "llm.decision",
+                context,
+                payload: { decision: llmDecision, timestamp: context.clock.now() },
+              });
 
-            if (llmDecision.type === "tool_selection" && llmDecision.toolName && llmDecision.confidence && llmDecision.confidence >= confidenceThresholds.llmMinConfidence) {
-              const llmSelectedTool = ToolRegistry.getTool(llmDecision.toolName);
-              if (llmSelectedTool) {
-                routed = { tool: llmSelectedTool, args: llmDecision.toolArgs ?? {}, confidence: { score: llmDecision.confidence, reasoning: [llmDecision.reasoning] } };
+              if (llmDecision.type === "tool_selection" && llmDecision.toolName && llmDecision.confidence && llmDecision.confidence >= confidenceThresholds.llmMinConfidence) {
+                const llmSelectedTool = ToolRegistry.getTool(llmDecision.toolName);
+                if (llmSelectedTool) {
+                  routed = { tool: llmSelectedTool, args: llmDecision.toolArgs ?? {}, confidence: { score: llmDecision.confidence, reasoning: [llmDecision.reasoning] } };
+                } else {
+                  context.metrics.record("fallback_count");
+                  routed = null;
+                }
+              } else if (llmDecision.type === "clarification" && llmDecision.clarificationQuestion) {
+                return {
+                  status: "failed",
+                  context,
+                  plan: { planId: context.requestId, goal: request.prompt, steps: [] },
+                  tool: { name: "clarification", description: "Clarification needed", match: () => null, execute: async () => ({ type: "text", reply: "Clarification needed", data: {} }) },
+                  error: { code: "CLARIFICATION_NEEDED", message: llmDecision.clarificationQuestion, isRetryable: false },
+                };
               } else {
-                // If LLM suggests a non-existent tool, treat as no capability
                 routed = null;
               }
-            } else if (llmDecision.type === "clarification" && llmDecision.clarificationQuestion) {
-              // Handle clarification, for now, we'll just fail
-              return {
-                status: "failed",
-                context,
-                plan: { planId: context.requestId, goal: request.prompt, steps: [] },
-                tool: { name: "clarification", description: "Clarification needed", match: () => null, execute: async () => ({ type: "text", reply: "Clarification needed", data: {} }) },
-                error: { code: "CLARIFICATION_NEEDED", message: llmDecision.clarificationQuestion, isRetryable: false },
-              };
-            } else if (llmDecision.type === "no_action") {
-              routed = null; // LLM explicitly said no action
             }
           }
-
-
         }
       }
       // If after LLM consultation (or if LLM is disabled) there's still no routed tool,
