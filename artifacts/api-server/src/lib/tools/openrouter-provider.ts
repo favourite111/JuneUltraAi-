@@ -10,12 +10,12 @@ export class OpenRouterModelProvider implements ModelProvider {
   private client: OpenAI;
   private model: string;
 
-  constructor(apiKey: string, model: string) {
+  constructor(apiKey: string, model: string = process.env.OPENROUTER_MODEL || "openai/gpt-4o") {
     this.client = new OpenAI({
       apiKey,
       baseURL: "https://openrouter.ai/api/v1",
     });
-    this.model = model;
+    this.model = model; // Use the provided model or default from env/hardcoded
   }
 
   async generate(prompt: string, options?: ModelCallOptions): Promise<ModelResponse> {

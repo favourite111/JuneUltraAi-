@@ -251,6 +251,7 @@ export interface ModelProvider {
 export interface ModelCallOptions {
   temperature?: number;
   maxTokens?: number;
+  model?: string;
   stopSequences?: string[];
 }
 
@@ -276,6 +277,12 @@ export interface LLMDecision {
   confidence?: number;
   clarificationQuestion?: string;
   reflectionOverride?: ReflectionDecisionType;
+}
+
+export interface HybridConfig {
+  enabled: boolean;
+  modelProvider?: string;
+  model?: string;
 }
 
 export interface ConfidenceThresholds {

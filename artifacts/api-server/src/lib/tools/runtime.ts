@@ -29,6 +29,7 @@ export interface AgentRuntimeDependencies extends ExecutionContextDependencies {
   readonly modelProvider?: ModelProvider;
   readonly promptManager?: PromptManager;
   readonly confidenceThresholds?: typeof DEFAULT_CONFIDENCE_THRESHOLDS;
+  readonly hybridConfig?: HybridConfig;
 }
 
 export interface AgentRuntimeRequest extends ExecutionContextInput {
@@ -106,8 +107,8 @@ export function createDeterministicAgentRuntime(
 
       let routed = router(request.prompt);
 
-      // If deterministic router has low confidence, consult the LLM
-      if (!routed || routed.confidence.score < confidenceThresholds.routerMinConfidence) {
+      // If deterministic router has low confidence and hybrid intelligence is enabled, consult the LLM
+      if ((!routed || routed.confidence.score < confidenceThresholds.routerMinConfidence) && dependencies.hybridConfig?.enabled) {
         if (configuredModelProvider && configuredPromptManager) {
           const availableTools = ToolRegistry.listTools();
           const llmPrompt = configuredPromptManager.renderPrompt(context, availableTools);
@@ -118,7 +119,7 @@ export function createDeterministicAgentRuntime(
             payload: { prompt: llmPrompt, timestamp: context.clock.now() },
           });
 
-          const llmResponse = await configuredModelProvider.generate(llmPrompt);
+          const llmResponse = await configuredModelProvider.generate(llmPrompt, { model: dependencies.hybridConfig?.model });
 
           eventBus.emit({
             type: "llm.response",
@@ -153,6 +154,12 @@ export function createDeterministicAgentRuntime(
             };
           }
         }
+      }
+      // If after LLM consultation (or if LLM is disabled) there's still no routed tool,
+      // or if hybrid intelligence is explicitly disabled and deterministic router has low confidence,
+      // then fall back to no capability.
+      if (!routed || ((!routed || routed.confidence.score < confidenceThresholds.routerMinConfidence) && !dependencies.hybridConfig?.enabled)) {
+        return { status: "no_capability", context, plan: { planId: context.requestId, goal: request.prompt, steps: [] } };
       }
 
       eventBus.emit({
