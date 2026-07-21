@@ -1,6 +1,7 @@
 import app from "./app.js";
 import { logger } from "./lib/logger.js";
 import { ensureSchema } from "./lib/schema.js";
+import { startPoller } from "./lib/github-poller.js";
 
 const rawPort = process.env["PORT"];
 
@@ -18,6 +19,7 @@ if (Number.isNaN(port) || port <= 0) {
 
 async function main(): Promise<void> {
   await ensureSchema();
+  startPoller();
 
   app.listen(port, (err) => {
     if (err) {

@@ -7,6 +7,8 @@ import healthRouter from "./routes/health.js";
 import chatRouter from "./routes/chat.js";
 import adminRouter from "./routes/admin.js";
 import statsRouter from "./routes/stats.js";
+import codeRouter from "./routes/code.js";
+import updatesRouter from "./routes/updates.js";
 import { logger } from "./lib/logger.js";
 import { stats } from "./lib/stats.js";
 
@@ -391,5 +393,7 @@ app.use("/api", healthRouter);        // GET /api/healthz
 app.use("/api/stats", statsRouter);   // GET /api/stats
 app.use("/v1/chat", chatRouter);      // GET/POST/DELETE /v1/chat
 app.use("/v1/admin", adminRouter);    // /v1/admin/bots...
+app.use("/code", codeRouter);         // GET /code/chatbot.js  (bot code delivery)
+app.use("/updates", updatesRouter);   // GET /updates          (SSE push stream)
 
 export default app;

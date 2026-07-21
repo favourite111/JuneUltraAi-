@@ -133,6 +133,38 @@ All errors follow `{ "success": false, "error": "..." }`:
 | 500 | Internal server error |
 | 503 | Admin API not configured (`ADMIN_KEY` unset) |
 
+## Push-update system (radio station model)
+
+The server acts as a radio station that polls GitHub once every 5 minutes and broadcasts to all connected bots when `chatbot.js` changes. Bots never touch GitHub directly.
+
+### Server-side endpoints
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /updates?apikey=KEY` | SSE stream — bots connect once and stay tuned. Sends `{"type":"current",...}` on connect and `{"type":"update",...}` on new versions. |
+| `GET /code/chatbot.js?apikey=KEY` | Serves the latest `chatbot.js` in memory. Bots call this after receiving an UPDATE event. |
+
+### Required config for the poller
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `GITHUB_TOKEN` | Secret | Fine-grained PAT, Contents: Read-only on the target repo |
+| `CODE_DELIVERY_KEY` | Secret | Shared key bots use as `JUNE_BOT_API_KEY` in their config |
+| `GITHUB_OWNER` | Env var | GitHub username / org |
+| `GITHUB_REPO` | Env var | Repository name |
+| `GITHUB_FILE_PATH` | Env var | Path to chatbot.js inside the repo (default: `chatbot.js`) |
+| `GITHUB_BRANCH` | Env var | Branch to watch (default: `main`) |
+| `GITHUB_POLL_INTERVAL_MS` | Env var | Poll interval in ms (default: `300000` = 5 min) |
+
+### How a bot uses it (chatbot-loader stub)
+
+```
+JUNE_SERVER_URL  = https://your-koyeb-app.koyeb.app
+JUNE_BOT_API_KEY = <same value as CODE_DELIVERY_KEY>
+```
+
+On startup the stub calls `GET /updates` and stays connected. On `UPDATE` it calls `GET /code/chatbot.js`, compiles the new code in a vm sandbox, and hot-swaps — zero downtime, no GitHub token needed on the bot side.
+
 ## Running locally (Replit)
 
 The workflow `artifacts/api-server: API Server` runs:
