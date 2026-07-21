@@ -86,6 +86,7 @@ export const qrCodeTool: Tool<QrCodeArgs> = {
   name: manifest.id,
   description: manifest.description,
   manifest,
+  score: (text: string) => (match(text) ? 0.98 : 0),
   match,
   execute,
 };

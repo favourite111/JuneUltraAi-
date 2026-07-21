@@ -5,11 +5,6 @@
  * instead of forwarding a message to the AI. Every tool owns its own
  * intent matching, argument extraction, execution, and response
  * formatting -- the chat route never contains tool-specific logic.
- *
- * Tools are transport-agnostic: they don't know or care whether the
- * caller is a WhatsApp bot, Telegram bot, or a web client. They return a
- * structured result; the caller (the chat route today, any future
- * client tomorrow) decides how to render or deliver it.
  */
 
 export interface ToolContext {
@@ -19,10 +14,7 @@ export interface ToolContext {
 }
 
 /**
- * How the transport layer should treat the tool's output. Tools return
- * whatever they naturally produce (a passthrough URL from an external
- * API, or a locally generated Buffer) -- they never upload to storage
- * themselves.
+ * How the transport layer should treat the tool's output.
  */
 export type ToolResponseType = "text" | "image" | "audio" | "document" | "sticker";
 
@@ -65,6 +57,47 @@ export interface ToolManifest {
   examples: string[];
 }
 
+/**
+ * Phase 3A - Scorable tool manifest for deterministic confidence scoring.
+ */
+export interface ScorableToolManifest extends ToolManifest {
+  /**
+   * Returns a deterministic confidence score (0.0-1.0) for how well this tool
+   * matches the given text, without executing the tool.
+   */
+  score(text: string): number;
+}
+
+/**
+ * Phase 3A - Execution Context for tools and agent components.
+ * This is the central immutable contract for the agent runtime.
+ */
+export interface ExecutionContext {
+  readonly metadata: {
+    readonly requestId: string;
+    readonly timestamp: number;
+  };
+  readonly user: {
+    readonly id: string;
+    readonly botId: string;
+  };
+  readonly group?: {
+    readonly id: string;
+  };
+  readonly conversation: {
+    readonly key: string;
+    readonly state: any; // Type to be refined based on ConversationState
+  };
+  readonly memory: {
+    readonly facts: any[]; // Type to be refined based on Fact[]
+    readonly history: any[]; // Type to be refined based on Message[]
+  };
+  readonly plannerState?: Record<string, unknown>;
+  readonly abortSignal: AbortSignal;
+  readonly logger: any; // Structured logger instance
+  readonly metrics: any; // Metrics emitter instance
+}
+
 export interface Tool<TArgs = unknown> {
   /** Stable machine-readable identifier, e.g. "url_shortener". */
   name: string;
@@ -72,43 +105,52 @@ export interface Tool<TArgs = unknown> {
   description: string;
   /** Optional manifest for Phase 2 tools. */
   manifest?: ToolManifest;
+  /** Optional score method for Phase 3A. */
+  score?(text: string): number;
   /**
    * Returns extracted arguments if this tool applies to the message,
-   * or null if it doesn't. Matching is deterministic (regex/keyword) --
-   * no AI call is involved in routing.
+   * or null if it doesn't.
    */
   match(text: string): TArgs | null;
-  /** Executes the tool and returns its structured result. May throw on failure. */
-  execute(args: TArgs, ctx: ToolContext): Promise<ToolResult>;
+  /** Executes the tool and returns its structured result. */
+  execute(args: TArgs, ctx: ExecutionContext | ToolContext): Promise<ToolResult>;
 }
 
-// --- Phase 3 Contracts (Future Enhancements) ---
+/**
+ * Phase 3A - Agent Event types for the Event Bus.
+ */
+export type AgentEvent =
+  | { type: "planner.started"; context: ExecutionContext; payload: { goal: string; timestamp: number; } }
+  | { type: "planner.completed"; context: ExecutionContext; payload: { plan: AgentPlan; timestamp: number; } }
+  | { type: "router.started"; context: ExecutionContext; payload: { prompt: string; timestamp: number; } }
+  | { type: "router.completed"; context: ExecutionContext; payload: { toolId: string | null; confidence: number; timestamp: number; } }
+  | { type: "tool.selected"; context: ExecutionContext; payload: { toolId: string; args: unknown; timestamp: number; } }
+  | { type: "tool.started"; context: ExecutionContext; payload: { toolId: string; timestamp: number; } }
+  | { type: "tool.completed"; context: ExecutionContext; payload: { toolId: string; result: ToolResult; timestamp: number; } }
+  | { type: "tool.failed"; context: ExecutionContext; payload: { toolId: string; error: ToolError; timestamp: number; } }
+  | { type: "reflection.started"; context: ExecutionContext; payload: { observation: ToolResult | ToolError; timestamp: number; } }
+  | { type: "reflection.completed"; context: ExecutionContext; payload: { nextAction: string; timestamp: number; } };
 
 /**
- * TODO: Phase 3 - Add a priority field to ToolManifest for intelligent ranking.
- * This will replace the implicit ordering in the registry array.
+ * Phase 3A - Event Bus interface.
  */
-// export interface ToolManifest { ... priority: number; ... }
+export interface EventBus {
+  emit(event: AgentEvent): void;
+  on(eventType: AgentEvent["type"], listener: (event: AgentEvent) => void): void;
+  once(eventType: AgentEvent["type"], listener: (event: AgentEvent) => void): void;
+  off(eventType: AgentEvent["type"], listener: (event: AgentEvent) => void): void;
+}
 
-/**
- * TODO: Phase 3 - Interface for Confidence Scoring.
- * An LLM or heuristic could generate this score for tool selection.
- */
 export interface ToolConfidence {
-  score: number; // e.g., 0.0 to 1.0
-  reasoning?: string; // Explanation for the score
+  score: number;
+  reasoning?: string;
 }
 
-/**
- * TODO: Phase 3 - Interface for the Planner.
- * The Planner will generate a sequence of actions (tool calls, LLM steps) to achieve a goal.
- */
 export interface AgentPlanStep {
   type: "tool_call" | "llm_reasoning" | "user_interaction";
   toolId?: string;
   toolArgs?: Record<string, unknown>;
   llmPrompt?: string;
-  // ... other planning details
 }
 
 export interface AgentPlan {
@@ -116,115 +158,31 @@ export interface AgentPlan {
   steps: AgentPlanStep[];
 }
 
-/**
- * TODO: Phase 3 - Interface for Reflection.
- * The Reflection module will evaluate the outcome of a step and decide the next action.
- */
 export interface AgentReflection {
-  observation: ToolResult | string; // Output from a tool or LLM
+  observation: ToolResult | string;
   evaluation: "success" | "failure" | "partial_success";
   nextAction: "continue_plan" | "replan" | "fallback" | "escalate_to_user";
   reasoning?: string;
 }
 
-/**
- * TODO: Phase 3 - Enhanced ToolResult schema for richer output.
- * This might include structured error codes, more detailed metadata.
- */
-// export interface ToolResult { ... errorCode?: string; ... }
-
-/**
- * TODO: Phase 3 - Tool Error schema for standardized error reporting.
- */
 export interface ToolError {
-  code: string; // e.g., "TOOL_EXECUTION_FAILED", "INVALID_INPUT"
+  code: string;
   message: string;
   details?: Record<string, unknown>;
   isRetryable: boolean;
 }
 
-/**
- * TODO: Phase 3 - Interface for Tool Registry Metrics.
- * Used for observability and performance monitoring.
- */
 export interface ToolRegistryMetrics {
   totalTools: number;
   manifestTools: number;
   legacyTools: number;
-  toolCallCounts: Record<string, number>; // toolId -> count
-  toolErrorCounts: Record<string, number>; // toolId -> error count
+  toolCallCounts: Record<string, number>;
+  toolErrorCounts: Record<string, number>;
 }
 
-/**
- * TODO: Phase 3 - Interface for Registry Health Diagnostics.
- * Provides insights into the state and issues of the tool registry.
- */
 export interface RegistryHealth {
   status: "ok" | "warning" | "error";
   message: string;
-  issues?: string[]; // List of identified issues
-  unreachableTools?: string[]; // Tools that failed to load/discover
-}
-
-// --- Phase 3A Contracts (Agent Runtime) ---
-
-/**
- * TODO: Phase 3A - Add a score method to ToolManifest for deterministic confidence scoring.
- * This will be used by the Capability Router.
- */
-export interface ScorableToolManifest extends ToolManifest {
-  /**
-   * Returns a deterministic confidence score (0.0-1.0) for how well this tool
-   * matches the given text, without executing the tool.
-   * This score is used by the Capability Router to rank tools.
-   */
-  score(text: string): number;
-}
-
-/**
- * TODO: Phase 3A - Execution Context for tools and agent components.
- * Provides all necessary runtime information.
- */
-export interface ExecutionContext {
-  botId: string;
-  userId: string;
-  groupId?: string;
-  // TODO: Phase 3A - Add full memory, conversation, plannerState, metrics, logger, abortSignal
-  // For now, keep it minimal to avoid breaking changes.
-  // memory: { /* Access to user facts, conversation history, etc. */ };
-  // conversation: { /* Current conversation state */ };
-  // plannerState: { /* State specific to the current planning process */ };
-  // metrics: { /* Interface for emitting metrics */ };
-  // logger: { /* Interface for structured logging */ };
-  // abortSignal: AbortSignal; // For graceful cancellation
-}
-
-/**
- * TODO: Phase 3A - Agent Event types for the Event Bus.
- */
-export type AgentEvent =
-  | { type: "planner.started"; payload: { goal: string; timestamp: number; } }
-  | { type: "planner.completed"; payload: { plan: AgentPlan; timestamp: number; } }
-  | { type: "router.started"; payload: { prompt: string; timestamp: number; } }
-  | { type: "router.completed"; payload: { toolId: string | null; confidence: number; timestamp: number; } }
-  | { type: "tool.selected"; payload: { toolId: string; args: unknown; timestamp: number; } }
-  | { type: "tool.started"; payload: { toolId: string; timestamp: number; } }
-  | { type: "tool.completed"; payload: { toolId: string; result: ToolResult; timestamp: number; } }
-  | { type: "tool.failed"; payload: { toolId: string; error: ToolError; timestamp: number; } }
-  | { type: "reflection.started"; payload: { observation: ToolResult | ToolError; timestamp: number; } }
-  | { type: "reflection.completed"; payload: { nextAction: string; timestamp: number; } };
-
-/**
- * TODO: Phase 3A - Event Bus interface for publishing and subscribing to agent events.
- */
-export interface EventBus {
-  emit(event: AgentEvent): void;
-  on(eventType: AgentEvent["type"], listener: (event: AgentEvent) => void): void;
-}
-
-// Update the existing Tool interface to include the score method from ScorableToolManifest
-declare module './types.js' {
-  interface Tool<TArgs = unknown> {
-    score?(text: string): number;
-  }
+  issues?: string[];
+  unreachableTools?: string[];
 }
