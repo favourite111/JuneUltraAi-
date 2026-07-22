@@ -240,8 +240,12 @@ export class DefaultMemoryManager implements MemoryManager {
             .catch(() => [] as ToolExecutionRecord[]),
         ]);
 
-      // Conversation: provider returned desc; reverse to chronological order.
-      const rawConversation: ConversationTurn[] = [...(conversationDesc ?? [])].reverse();
+      // Conversation: when no query hint, provider returned desc; reverse to chronological order.
+      // When query hint is set, provider returns relevance-ranked items — do NOT reverse or
+      // the ranking is destroyed (ADR-005 §13.1, Milestone 3).
+      const rawConversation: ConversationTurn[] = queryHint
+        ? (conversationDesc ?? [])
+        : [...(conversationDesc ?? [])].reverse();
 
       // Apply conversation budget: trim oldest turns until estimate fits the
       // tier allocation, then prepend a synthetic summary turn for the dropped
