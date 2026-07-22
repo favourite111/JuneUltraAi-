@@ -4,6 +4,8 @@
  * Public surface of the memory subsystem.
  * Import from here, not from individual files inside lib/memory/.
  */
+export { DefaultMemoryManager } from "./memory-manager.js";
+
 export type {
   // Tier identity
   MemoryTierId,
