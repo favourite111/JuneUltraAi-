@@ -38,6 +38,10 @@ import {
   type TokenEstimator,
   CharacterTokenEstimator,
 } from "./token-estimator.js";
+import {
+  type ConversationSummarizer,
+  ExtractiveConversationSummarizer,
+} from "./conversation-summarizer.js";
 
 // ---------------------------------------------------------------------------
 // Internal constants
@@ -159,13 +163,16 @@ function emptyContext(budget: ContextBudget, loadedAt: number): MemoryContext {
  */
 export class DefaultMemoryManager implements MemoryManager {
   private readonly estimator: TokenEstimator;
+  private readonly summarizer: ConversationSummarizer;
 
   constructor(
     private readonly provider: StorageProvider,
     private readonly eventBus?: EventBus,
     estimator?: TokenEstimator,
+    summarizer?: ConversationSummarizer,
   ) {
     this.estimator = estimator ?? new CharacterTokenEstimator();
+    this.summarizer = summarizer ?? new ExtractiveConversationSummarizer();
   }
 
   // -------------------------------------------------------------------------
@@ -225,7 +232,18 @@ export class DefaultMemoryManager implements MemoryManager {
         ]);
 
       // Conversation: provider returned desc; reverse to chronological order.
-      const conversation: ConversationTurn[] = [...(conversationDesc ?? [])].reverse();
+      const rawConversation: ConversationTurn[] = [...(conversationDesc ?? [])].reverse();
+
+      // Apply conversation budget: trim oldest turns until estimate fits the
+      // tier allocation, then prepend a synthetic summary turn for the dropped
+      // turns.  ADR-005 §9.3 rule 1: the most recent turn is always kept.
+      // ADR-005 §9.4: evicted turns are replaced with a deterministic
+      // extractive summary; no LLM call.
+      const conversation = this.applyConversationBudget(
+        rawConversation,
+        budget.tierAllocations.conversation,
+        scope,
+      );
 
       // User facts: exclude decayed; sort by importance × confidence descending.
       const userFacts: UserFact[] = (userFactValues ?? [])
@@ -408,5 +426,83 @@ export class DefaultMemoryManager implements MemoryManager {
     ) as Record<MemoryTierId, "ok" | "degraded" | "unavailable">;
 
     return { status, tiers };
+  }
+
+  // -------------------------------------------------------------------------
+  // applyConversationBudget() — private
+  // -------------------------------------------------------------------------
+
+  /**
+   * Enforces the conversation tier token allocation (ADR-005 §9.3 and §9.4).
+   *
+   * Algorithm:
+   *   1. If the full conversation fits within the tier allocation, return it
+   *      unchanged.
+   *   2. Otherwise, remove turns from the oldest end (index 0) one by one
+   *      until the remaining slice fits.  The most recent turn is always kept
+   *      (ADR-005 §9.3 rule 1).
+   *   3. If any turns were removed, call the injected ConversationSummarizer
+   *      to produce a deterministic extractive summary of the dropped turns,
+   *      then prepend a synthetic ConversationTurn carrying that summary so
+   *      the LLM retains semantic context for the evicted history.
+   *
+   * The synthetic summary turn is ephemeral — it exists only in the returned
+   * MemoryContext snapshot and is never written to storage.
+   *
+   * @param turns       Chronologically ordered conversation turns.
+   * @param tokenBudget Max tokens available for the conversation tier.
+   * @param scope       The current request scope (used for synthetic turn IDs).
+   * @returns           The (possibly truncated + summary-prefixed) conversation.
+   */
+  private applyConversationBudget(
+    turns: ConversationTurn[],
+    tokenBudget: number,
+    scope: MemoryScope,
+  ): ConversationTurn[] {
+    // Fast path: fits within budget — no truncation needed.
+    if (this.estimator.estimate(turns) <= tokenBudget) {
+      return turns;
+    }
+
+    // Trim from the oldest end until the slice fits.
+    // We always keep at least the last turn (ADR-005 §9.3 rule 1).
+    let remaining = [...turns];
+    const evicted: ConversationTurn[] = [];
+
+    while (
+      remaining.length > 1 &&
+      this.estimator.estimate(remaining) > tokenBudget
+    ) {
+      evicted.push(remaining.shift()!);
+    }
+
+    if (evicted.length === 0) {
+      // Nothing could be evicted (single-turn edge case) — return as-is.
+      return remaining;
+    }
+
+    // Build a synthetic summary turn from the evicted slice.
+    // turnId is deterministic: derived from the first evicted turn's timestamp.
+    const summaryContent = this.summarizer.summarize(evicted);
+    const syntheticTurn: ConversationTurn = {
+      turnId:    `summary-${evicted[0]!.timestamp}`,
+      requestId: scope.requestId,
+      role:      "assistant",
+      content:   summaryContent,
+      timestamp: evicted[0]!.timestamp,
+    };
+
+    // Emit truncation event for observability (ADR-005 events table).
+    this.eventBus?.emit({
+      type: "memory.budget_truncated",
+      context: null as any,
+      payload: {
+        removedTiers: ["conversation"] as any,
+        tokensSaved: this.estimator.estimate(evicted),
+        timestamp: Date.now(),
+      },
+    });
+
+    return [syntheticTurn, ...remaining];
   }
 }

@@ -7,6 +7,8 @@
 export { DefaultMemoryManager } from "./memory-manager.js";
 export { CharacterTokenEstimator } from "./token-estimator.js";
 export type { TokenEstimator } from "./token-estimator.js";
+export { ExtractiveConversationSummarizer } from "./conversation-summarizer.js";
+export type { ConversationSummarizer } from "./conversation-summarizer.js";
 export { PostgresStorageProvider } from "./providers/postgres-storage-provider.js";
 export { InMemoryStorageProvider } from "./providers/in-memory-storage-provider.js";
 
