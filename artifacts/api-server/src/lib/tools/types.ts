@@ -7,6 +7,9 @@
  * formatting -- the chat route never contains tool-specific logic.
  */
 
+// Phase 3B — import memory types (one-way dependency: tools → memory, never memory → tools)
+import type { MemoryContext, MemoryScope, MemoryTierId } from "../memory/types.js";
+
 export interface ToolContext {
   botId: string;
   userId: string;
@@ -108,6 +111,12 @@ export interface ExecutionContextInput {
   readonly plannerState?: Readonly<Record<string, unknown>>;
   /** Optional lifecycle event bus injected by the runtime composition root. */
   readonly eventBus?: EventBus;
+  /**
+   * Phase 3B — optional frozen memory snapshot produced by MemoryManager.load()
+   * before createExecutionContext() is called. Non-breaking: callers that do
+   * not supply this field continue to work unchanged.
+   */
+  readonly memoryContext?: MemoryContext;
 }
 
 /**
@@ -158,6 +167,12 @@ export interface ExecutionContext {
    * without adopting the Phase 3A pipeline in the same change.
    */
   readonly eventBus?: EventBus;
+  /**
+   * Phase 3B — frozen memory snapshot attached to this context.
+   * Populated from ExecutionContextInput.memoryContext by createExecutionContext().
+   * Read-only inside execute() — never mutated by any pipeline component.
+   */
+  readonly memoryContext?: MemoryContext;
 }
 
 export interface Tool<TArgs = unknown> {
@@ -195,7 +210,19 @@ export type AgentEvent =
   | { type: "reflection.failed"; context: ExecutionContext; payload: { error: ToolError; timestamp: number; } }
   | { type: "llm.request"; context: ExecutionContext; payload: { prompt: string; options?: ModelCallOptions; timestamp: number; } }
   | { type: "llm.response"; context: ExecutionContext; payload: { response: ModelResponse; timestamp: number; } }
-  | { type: "llm.decision"; context: ExecutionContext; payload: { decision: LLMDecision; timestamp: number; } };
+  | { type: "llm.decision"; context: ExecutionContext; payload: { decision: LLMDecision; timestamp: number; } }
+  // Phase 3B — memory lifecycle events (ADR-005 §11.5, additive non-breaking)
+  | { type: "memory.load_started";    context: ExecutionContext; payload: { scope: MemoryScope; timestamp: number; } }
+  | { type: "memory.load_completed";  context: ExecutionContext; payload: { version: number; budgetUsed: number; tiersSummary: Record<MemoryTierId, number>; timestamp: number; } }
+  | { type: "memory.load_failed";     context: ExecutionContext; payload: { error: string; timestamp: number; } }
+  | { type: "memory.record_started";  context: ExecutionContext; payload: { scope: MemoryScope; timestamp: number; } }
+  | { type: "memory.record_completed";context: ExecutionContext; payload: { tiersWritten: MemoryTierId[]; timestamp: number; } }
+  | { type: "memory.record_failed";   context: ExecutionContext; payload: { error: string; timestamp: number; } }
+  | { type: "memory.tier_degraded";   context: ExecutionContext; payload: { tier: MemoryTierId; reason: string; timestamp: number; } }
+  | { type: "memory.budget_truncated";context: ExecutionContext; payload: { removedTiers: MemoryTierId[]; tokensSaved: number; timestamp: number; } }
+  | { type: "memory.forgotten";       context: ExecutionContext; payload: { scope: MemoryScope; tiersCleared: MemoryTierId[]; timestamp: number; } }
+  | { type: "memory.write_conflict";  context: ExecutionContext; payload: { tier: MemoryTierId; retrying: boolean; timestamp: number; } }
+  | { type: "memory.fact_decayed";    context: ExecutionContext; payload: { factId: string; key: string; finalConfidence: number; timestamp: number; } };
 
 
 /**
