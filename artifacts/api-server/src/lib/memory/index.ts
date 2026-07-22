@@ -7,6 +7,8 @@
 export { DefaultMemoryManager } from "./memory-manager.js";
 export { ConfidenceDecayService, computeDecayedConfidence } from "./confidence-decay.js";
 export type { DecaySweepResult } from "./confidence-decay.js";
+export { StoragePruner, DEFAULT_PRUNER_CONFIG } from "./storage-pruner.js";
+export type { StoragePrunerConfig, PruneResult } from "./storage-pruner.js";
 export { CharacterTokenEstimator } from "./token-estimator.js";
 export type { TokenEstimator } from "./token-estimator.js";
 export { ExtractiveConversationSummarizer } from "./conversation-summarizer.js";
