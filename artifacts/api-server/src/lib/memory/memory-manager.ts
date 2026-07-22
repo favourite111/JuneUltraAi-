@@ -202,6 +202,12 @@ export class DefaultMemoryManager implements MemoryManager {
     });
 
     try {
+      // Thread the optional query hint into list calls that benefit from
+      // relevance ranking (conversation and user_profile tiers).
+      // When queryHint is absent, similarityQuery is undefined and providers
+      // fall back to their default insertion-order behaviour (ADR-005 §13.1).
+      const queryHint = scope.queryHint;
+
       // Fetch all tiers concurrently; individual failures default to null / [].
       const [session, conversationDesc, userFactValues, toolRecords] =
         await Promise.all([
@@ -213,6 +219,7 @@ export class DefaultMemoryManager implements MemoryManager {
             .list<ConversationTurn>(makeConversationKey(scope), {
               limit: DEFAULT_CONVERSATION_LIMIT,
               order: "desc",
+              similarityQuery: queryHint,
             })
             .catch(() => [] as ConversationTurn[]),
 
@@ -220,6 +227,7 @@ export class DefaultMemoryManager implements MemoryManager {
             .list<UserFact>(makeUserProfileKey(scope), {
               limit: DEFAULT_USER_FACT_LIMIT,
               order: "asc",
+              similarityQuery: queryHint,
             })
             .catch(() => [] as UserFact[]),
 
@@ -227,6 +235,7 @@ export class DefaultMemoryManager implements MemoryManager {
             .list<ToolExecutionRecord>(makeToolExecutionKey(scope), {
               limit: 1,
               order: "desc",
+              // Tool execution records are not query-ranked — always most recent.
             })
             .catch(() => [] as ToolExecutionRecord[]),
         ]);

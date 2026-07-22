@@ -9,6 +9,8 @@ export { CharacterTokenEstimator } from "./token-estimator.js";
 export type { TokenEstimator } from "./token-estimator.js";
 export { ExtractiveConversationSummarizer } from "./conversation-summarizer.js";
 export type { ConversationSummarizer } from "./conversation-summarizer.js";
+export { TermOverlapRelevanceScorer, tokenise } from "./relevance-scorer.js";
+export type { RelevanceScorer } from "./relevance-scorer.js";
 export { PostgresStorageProvider } from "./providers/postgres-storage-provider.js";
 export { InMemoryStorageProvider } from "./providers/in-memory-storage-provider.js";
 

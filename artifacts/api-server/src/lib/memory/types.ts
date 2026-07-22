@@ -44,6 +44,13 @@ export interface MemoryScope {
   readonly sessionId?: string;
   /** Unique per-request; used for write attribution in ToolExecutionRecord. */
   readonly requestId: string;
+  /**
+   * Optional hint from the current user message, threaded into
+   * ListOptions.similarityQuery for relevance-ranked retrieval (ADR-005 §13.1).
+   * When absent, retrieval falls back to insertion-order (existing behaviour).
+   * Additive extension — Milestone 3.
+   */
+  readonly queryHint?: string;
 }
 
 // ---------------------------------------------------------------------------

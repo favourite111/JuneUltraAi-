@@ -28,6 +28,10 @@ import {
   type WriteResult,
   WriteConflictError,
 } from "../types.js";
+import {
+  type RelevanceScorer,
+  TermOverlapRelevanceScorer,
+} from "../relevance-scorer.js";
 
 // ---------------------------------------------------------------------------
 // Internal record shape
@@ -93,6 +97,49 @@ function isExpired(record: InternalRecord, now: number): boolean {
 }
 
 // ---------------------------------------------------------------------------
+// Searchable string extraction
+// ---------------------------------------------------------------------------
+
+/**
+ * Extracts a human-readable string from a stored value for relevance scoring.
+ *
+ * Priority heuristic (first match wins):
+ *   1. ConversationTurn  → turn.content
+ *   2. UserFact          → "<key> <value>"
+ *   3. Plain string      → the string itself
+ *   4. Any other object  → JSON.stringify (graceful fallback)
+ *
+ * Never throws — the RelevanceScorer must also be safe against bad input.
+ */
+function extractSearchableString(item: unknown): string {
+  if (item === null || item === undefined) return "";
+  if (typeof item === "string") return item;
+
+  if (typeof item === "object") {
+    const obj = item as Record<string, unknown>;
+
+    // ConversationTurn: use the content field directly.
+    if (typeof obj["content"] === "string") {
+      return obj["content"];
+    }
+
+    // UserFact: combine key + value for richer matching.
+    if (typeof obj["key"] === "string" && typeof obj["value"] === "string") {
+      return `${obj["key"]} ${obj["value"]}`;
+    }
+
+    // Generic fallback: serialise the whole object.
+    try {
+      return JSON.stringify(item);
+    } catch {
+      return "";
+    }
+  }
+
+  return String(item);
+}
+
+// ---------------------------------------------------------------------------
 // InMemoryStorageProvider
 // ---------------------------------------------------------------------------
 
@@ -100,6 +147,17 @@ export class InMemoryStorageProvider implements StorageProvider {
   private readonly store = new Map<string, InternalRecord>();
   /** Global monotonically-increasing revision counter shared across all keys. */
   private revision = 0;
+  private readonly scorer: RelevanceScorer;
+
+  /**
+   * @param scorer Optional relevance scorer used when ListOptions.similarityQuery
+   *   is present.  Defaults to TermOverlapRelevanceScorer (Jaccard coefficient).
+   *   Pass a custom implementation to substitute BM25, embeddings, etc. without
+   *   changing any other interface.
+   */
+  constructor(scorer?: RelevanceScorer) {
+    this.scorer = scorer ?? new TermOverlapRelevanceScorer();
+  }
 
   // -------------------------------------------------------------------------
   // Private helpers
@@ -201,9 +259,29 @@ export class InMemoryStorageProvider implements StorageProvider {
       });
     }
 
-    // Ordering: items are stored in insertion order (ascending).
-    if (options.order === "desc") {
-      items = [...items].reverse();
+    // Relevance ranking (ADR-005 §13.1).
+    // When similarityQuery is present, score each item and sort descending.
+    // Ties preserve the current (insertion) order — Array.sort is stable in
+    // V8/Node.js ≥ 11, so equal-scored items retain their relative positions.
+    // When similarityQuery is absent, insertion-order behaviour is unchanged.
+    if (options.similarityQuery) {
+      const query = options.similarityQuery;
+      const scored = items.map((item, insertionIndex) => ({
+        item,
+        insertionIndex,
+        score: this.scorer.score(query, extractSearchableString(item)),
+      }));
+      // Sort descending by score; ties fall back to ascending insertion order.
+      scored.sort((a, b) => {
+        const diff = b.score - a.score;
+        return diff !== 0 ? diff : a.insertionIndex - b.insertionIndex;
+      });
+      items = scored.map(({ item }) => item);
+    } else {
+      // Ordering: items are stored in insertion order (ascending).
+      if (options.order === "desc") {
+        items = [...items].reverse();
+      }
     }
 
     return items.slice(0, options.limit);
