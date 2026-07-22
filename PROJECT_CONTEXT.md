@@ -837,3 +837,36 @@ curl -X POST http://localhost:8080/v1/chat \
   -H "Content-Type: application/json" \
   -d '{"prompt":"hey what can you do?","userId":"user1"}'
 ```
+
+---
+
+## 22. Roadmap & Milestones
+
+### Phase 3A — Deterministic Runtime (Completed)
+- Milestone 1: Execution Context
+- Milestone 2: Event Bus
+- Milestone 3: Capability Router
+- Milestone 4: Planner
+- Milestone 5: Tool Executor
+- Milestone 6: Reflection Engine
+- Milestone 7: Deterministic Runtime Certification
+
+### Phase 3B — Hybrid Intelligence & Memory Architecture (Completed)
+- Milestone 1: OpenRouter Provider
+- Milestone 2: Prompt Management
+- Milestone 3: Structured Decision Logic
+- Milestone 4: Resilience & Circuit Breaker
+- Milestone 5: Memory Contracts
+- Milestone 6: InMemoryStorageProvider
+- Milestone 7: MemoryManager
+- Milestone 8: Route Integration
+
+### Phase 3C — Intelligence Optimization (Next)
+- 3C-1: Accurate token budgeting (replace char/4 estimator)
+- 3C-2: Conversation summarization
+- 3C-3: Memory compression
+- 3C-4: Semantic retrieval (Vector/RAG)
+- 3C-5: Prompt optimization
+- 3C-6: Tool-aware context selection
+- 3C-7: Self-learning memory ranking
+- 3C-8: Production observability & metrics
