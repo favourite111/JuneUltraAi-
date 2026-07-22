@@ -27,7 +27,7 @@ function createInput(overrides: Record<string, unknown> = {}) {
       },
     ],
     logger: { child: vi.fn() },
-    metrics: { increment: vi.fn() },
+    metrics: { record: vi.fn(), getSnapshot: vi.fn(() => ({})) },
     abortSignal: new AbortController().signal,
     ...overrides,
   };

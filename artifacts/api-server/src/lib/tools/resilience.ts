@@ -50,7 +50,9 @@ export function normalizeError(error: any): ToolError {
   } else if (message.includes("network") || message.includes("fetch") || message.includes("ECONNRESET")) {
     code = "NETWORK_ERROR";
     retryable = true;
-  } else if (code === "VALIDATION_FAILED" || code === "INVALID_RESPONSE") {
+  }
+  
+  if ((code as string) === "VALIDATION_FAILED" || (code as string) === "INVALID_RESPONSE") {
     retryable = false;
   }
 

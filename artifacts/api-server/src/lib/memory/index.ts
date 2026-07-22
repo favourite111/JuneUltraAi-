@@ -5,9 +5,10 @@
  * Import from here, not from individual files inside lib/memory/.
  */
 export { DefaultMemoryManager } from "./memory-manager.js";
+export { PostgresStorageProvider } from "./providers/postgres-storage-provider.js";
+export { InMemoryStorageProvider } from "./providers/in-memory-storage-provider.js";
 
 export type {
-  // Tier identity
   MemoryTierId,
 
   // Scope & identity

@@ -12,7 +12,7 @@ function createContext(requestId = "request-1", timestamp = 1_725_000_000_000): 
       conversationState: { phase: "active" },
       history: [],
       logger: {},
-      metrics: {},
+      metrics: { record: () => {}, getSnapshot: () => ({}) },
     },
     {
       idGenerator: { next: () => requestId },

@@ -33,6 +33,7 @@ import {
   MemoryError,
   MEMORY_CONTEXT_VERSION,
 } from "./types.js";
+import type { EventBus } from "../tools/types.js";
 
 // ---------------------------------------------------------------------------
 // Internal constants
@@ -172,7 +173,10 @@ function emptyContext(budget: ContextBudget, loadedAt: number): MemoryContext {
  *   const context = await manager.load(scope, budget);
  */
 export class DefaultMemoryManager implements MemoryManager {
-  constructor(private readonly provider: StorageProvider) {}
+  constructor(
+    private readonly provider: StorageProvider,
+    private readonly eventBus?: EventBus
+  ) {}
 
   // -------------------------------------------------------------------------
   // load()
@@ -192,6 +196,13 @@ export class DefaultMemoryManager implements MemoryManager {
    */
   async load(scope: MemoryScope, budget: ContextBudget): Promise<MemoryContext> {
     const loadedAt = Date.now();
+
+    // Emit load started if bus is present. Note: context is null here as it's not yet created.
+    this.eventBus?.emit({
+      type: "memory.load_started",
+      context: null as any,
+      payload: { scope, timestamp: loadedAt },
+    });
 
     try {
       // Fetch all tiers concurrently; individual failures default to null / [].
@@ -248,7 +259,7 @@ export class DefaultMemoryManager implements MemoryManager {
         budget.modelProfile.usableContextTokens - budgetUsed,
       );
 
-      return {
+      const context: MemoryContext = {
         version: MEMORY_CONTEXT_VERSION,
         session: session ?? null,
         conversation,
@@ -258,9 +269,31 @@ export class DefaultMemoryManager implements MemoryManager {
         budgetRemaining,
         loadedAt,
       };
-    } catch {
-      // Any unexpected assembly error → degrade to an empty context so the
-      // pipeline can still run.  Milestone 8 will wire EventBus emission here.
+
+      this.eventBus?.emit({
+        type: "memory.load_completed",
+        context: null as any,
+        payload: {
+          version: context.version,
+          budgetUsed: context.budgetUsed,
+          tiersSummary: {
+            session: session ? 1 : 0,
+            conversation: conversation.length,
+            user_profile: userFacts.length,
+            tool_execution: toolRecords?.length ?? 0,
+            request: 0,
+          },
+          timestamp: Date.now(),
+        },
+      });
+
+      return context;
+    } catch (err) {
+      this.eventBus?.emit({
+        type: "memory.load_failed",
+        context: null as any,
+        payload: { error: err instanceof Error ? err.message : String(err), timestamp: Date.now() },
+      });
       return emptyContext(budget, loadedAt);
     }
   }
@@ -280,15 +313,27 @@ export class DefaultMemoryManager implements MemoryManager {
    * On a second conflict the write is skipped and noted for Milestone 12.
    */
   async record(scope: MemoryScope, updates: MemoryUpdates): Promise<void> {
+    this.eventBus?.emit({
+      type: "memory.record_started",
+      context: null as any,
+      payload: { scope, timestamp: Date.now() },
+    });
+
     const writes: Promise<unknown>[] = [];
+    const tiersWritten: MemoryTierId[] = [];
 
     // -- Session (single value, replace) ------------------------------------
     if (updates.session !== undefined) {
       writes.push(
         this.provider
           .write(makeSessionKey(scope), updates.session)
-          .catch(() => {
-            // best-effort: swallow; EventBus emission added in Milestone 8
+          .then(() => { tiersWritten.push("session"); })
+          .catch((err) => {
+            this.eventBus?.emit({
+              type: "memory.record_failed",
+              context: null as any,
+              payload: { error: `session: ${err.message}`, timestamp: Date.now() },
+            });
           }),
       );
     }
@@ -330,6 +375,12 @@ export class DefaultMemoryManager implements MemoryManager {
 
     // Fire all writes concurrently; individual catch handlers above absorb failures.
     await Promise.all(writes);
+
+    this.eventBus?.emit({
+      type: "memory.record_completed",
+      context: null as any,
+      payload: { tiersWritten, timestamp: Date.now() },
+    });
   }
 
   // -------------------------------------------------------------------------

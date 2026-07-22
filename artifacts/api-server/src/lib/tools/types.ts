@@ -102,11 +102,12 @@ export interface ExecutionContextInput {
   readonly conversationState: unknown;
   readonly memory?: {
     readonly facts: readonly unknown[];
+    readonly history?: readonly unknown[];
   };
   readonly facts?: readonly unknown[];
   readonly history: readonly unknown[];
   readonly logger: unknown;
-  readonly metrics: unknown;
+  readonly metrics: RuntimeMetrics;
   readonly abortSignal?: AbortSignal;
   readonly plannerState?: Readonly<Record<string, unknown>>;
   /** Optional lifecycle event bus injected by the runtime composition root. */

@@ -11,6 +11,12 @@ import {
   type Message,
 } from "../lib/conversation-store.js";
 import { createDeterministicAgentRuntime } from "../lib/tools/runtime.js";
+import { AgentEventBus } from "../lib/tools/event-bus.js";
+import {
+  DefaultMemoryManager,
+  PostgresStorageProvider,
+  DEFAULT_CONTEXT_BUDGET,
+} from "../lib/memory/index.js";
 import {
   extractFacts,
   saveFacts,
@@ -36,9 +42,12 @@ const SHIZO_KEY = "shizo";
 // The composition root owns non-deterministic production providers. The
 // runtime itself receives them only through dependency injection, enabling
 // deterministic recordings and replay tests with alternate providers.
+const memoryManager = new DefaultMemoryManager(new PostgresStorageProvider());
+
 const deterministicToolRuntime = createDeterministicAgentRuntime({
   clock: { now: () => Date.now() },
   idGenerator: { next: () => randomUUID() },
+  memoryManager,
 });
 
 // ---------------------------------------------------------------------------
@@ -823,6 +832,18 @@ async function handleChat(req: Request, res: Response): Promise<void> {
 
   const botId   = req.botId;
   const convKey = buildConversationKey(botId, userId, groupId);
+  const requestId = randomUUID();
+  const eventBus = new AgentEventBus();
+
+  // Phase 3B — load memory context before execution
+  const memoryScope = {
+    tenantId: "default",
+    botId,
+    userId,
+    groupId,
+    requestId,
+  };
+  const memoryContext = await memoryManager.load(memoryScope, DEFAULT_CONTEXT_BUDGET);
 
   const runtimeResponse = await deterministicToolRuntime.execute({
     prompt,
@@ -830,16 +851,48 @@ async function handleChat(req: Request, res: Response): Promise<void> {
     userId,
     groupId,
     conversationKey: convKey,
-    conversationState: {},
-    history: [],
-    memory: { facts: [] },
+    conversationState: memoryContext.session ?? {},
+    history: memoryContext.conversation,
+    memory: { 
+      facts: memoryContext.userFacts,
+      history: memoryContext.conversation,
+    },
+    memoryContext,
+    eventBus,
     logger: req.log,
-    metrics: {},
+    metrics: {
+      record: () => {},
+      getSnapshot: () => ({}),
+    },
   });
 
   if (runtimeResponse.status === "completed") {
     const { result, tool } = runtimeResponse;
     const now = Math.floor(Date.now() / 1000);
+    
+    // Phase 3B — record memory updates
+    void memoryManager.record(memoryScope, {
+      conversationTurn: {
+        turnId: randomUUID(),
+        requestId,
+        role: "assistant",
+        content: result.reply,
+        timestamp: now,
+        toolUsed: tool.name,
+      },
+      toolOutputs: [{
+        executionId: randomUUID(),
+        requestId,
+        toolName: tool.name,
+        toolVersion: tool.manifest?.version ?? "1.0.0",
+        args: runtimeResponse.context.plannerState ?? {},
+        result: result.data,
+        reflectionDecision: "complete",
+        durationMs: 0, // TODO: track duration
+        timestamp: now,
+      }]
+    });
+
     const newMessages: Message[] = [
       { role: "user",      speaker: userId, content: prompt,       ts: now },
       { role: "assistant", speaker: "june", content: result.reply, ts: now },
@@ -996,6 +1049,18 @@ async function handleChat(req: Request, res: Response): Promise<void> {
     const topicKey   = state.topics[0] ?? null;
     void savePendingTopic(botId, userId, topicText, importance, topicKey);
   }
+
+  // Phase 3B — record memory updates for AI response
+  void memoryManager.record(memoryScope, {
+    conversationTurn: {
+      turnId: randomUUID(),
+      requestId,
+      role: "assistant",
+      content: reply,
+      timestamp: now,
+    },
+    session: state, // Store conversation state in session memory
+  });
 
   res.json({
     success: true,

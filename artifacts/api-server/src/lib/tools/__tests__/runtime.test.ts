@@ -19,7 +19,7 @@ describe("Agent Runtime - Phase 3A", () => {
         facts: ["fact 1"],
         history: [{ role: "user", content: "hello" }],
         logger: {},
-        metrics: {},
+        metrics: { record: () => {}, getSnapshot: () => ({}) },
       }, runtimeDependencies);
 
       expect(context.user.id).toBe("user-456");
@@ -41,7 +41,7 @@ describe("Agent Runtime - Phase 3A", () => {
         facts: [],
         history: [],
         logger: {},
-        metrics: {},
+        metrics: { record: () => {}, getSnapshot: () => ({}) },
       }, runtimeDependencies);
       const listener = vi.fn();
 

@@ -4,22 +4,26 @@ import { createToolExecutor } from "./executor.js";
 import { createPlanner } from "./planner.js";
 import { createReflectionEngine } from "./reflection.js";
 import { routeTool, type RoutedTool, ToolRegistry } from "./registry.js";
-import type {
-  AgentPlan,
-  EventBus,
-  ExecutionContext,
-  ExecutionContextDependencies,
-  ExecutionContextInput,
-  ReflectionDecision,
-  ReflectionDecisionType,
-  Tool,
-  ToolError,
-  ToolResult,
+import { 
+  type AgentPlan,
+  type EventBus,
+  type ExecutionContext,
+  type ExecutionContextDependencies,
+  type ExecutionContextInput,
+  type ReflectionDecision,
+  type ReflectionDecisionType,
+  type Tool,
+  type ToolError,
+  type ToolResult,
+  type ModelProvider, 
+  type PromptManager, 
+  type LLMDecision, 
+  type ModelResponse,
+  type HybridConfig,
+  DEFAULT_CONFIDENCE_THRESHOLDS,
 } from "./types.js";
 
 export type CapabilityRouter = (prompt: string) => RoutedTool | null;
-
-import { ModelProvider, PromptManager, LLMDecision, DEFAULT_CONFIDENCE_THRESHOLDS, ModelResponse } from "./types.js";
 import { DecisionValidator, normalizeError, CircuitBreaker, MetricsCollector } from "./resilience.js";
 
 export interface AgentRuntimeDependencies extends ExecutionContextDependencies {
@@ -31,6 +35,8 @@ export interface AgentRuntimeDependencies extends ExecutionContextDependencies {
   readonly promptManager?: PromptManager;
   readonly confidenceThresholds?: typeof DEFAULT_CONFIDENCE_THRESHOLDS;
   readonly hybridConfig?: HybridConfig;
+  /** Phase 3B — Contextual Memory Architecture. */
+  readonly memoryManager?: import("../memory/types.js").MemoryManager;
 }
 
 export interface AgentRuntimeRequest extends ExecutionContextInput {

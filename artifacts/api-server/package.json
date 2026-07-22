@@ -24,7 +24,8 @@
     "pino": "^9",
     "pino-http": "^10",
     "postgres": "^3.4.9",
-    "qrcode": "^1.5.4"
+    "qrcode": "^1.5.4",
+    "openai": "^4.0.0"
   },
   "devDependencies": {
     "@types/cookie-parser": "^1.4.10",

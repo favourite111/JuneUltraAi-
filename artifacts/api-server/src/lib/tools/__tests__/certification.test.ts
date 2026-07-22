@@ -46,7 +46,7 @@ function request(prompt = "run test capability", userId: string = "user-1"): Age
     history: [],
     memory: { facts: [] },
     logger: {},
-    metrics: {},
+    metrics: { record: () => {}, getSnapshot: () => ({}) },
   };
 }
 

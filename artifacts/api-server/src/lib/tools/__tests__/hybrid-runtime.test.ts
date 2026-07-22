@@ -7,10 +7,10 @@ import { ToolRegistry } from "../registry.js";
 import { MetricsCollector } from "../resilience.js";
 import type {
   AgentEvent,
-  AgentRuntimeRequest,
   Tool,
   ToolResult,
 } from "../types.js";
+import type { AgentRuntimeRequest } from "../runtime.js";
 import type {
   AgentRuntimeResponse,
   CompletedRuntimeResponse,

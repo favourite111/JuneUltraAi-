@@ -5,7 +5,8 @@ import { MockModelProvider } from "../mock-model-provider.js";
 import { MockPromptManager } from "../mock-prompt-manager.js";
 import { ToolRegistry } from "../registry.js";
 import { MetricsCollector } from "../resilience.js";
-import type { AgentRuntimeRequest, Tool, ToolResult } from "../types.js";
+import type { Tool, ToolResult } from "../types.js";
+import type { AgentRuntimeRequest } from "../runtime.js";
 
 const successResult: ToolResult = {
   type: "text",
