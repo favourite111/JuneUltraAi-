@@ -34,6 +34,10 @@ import {
   MEMORY_CONTEXT_VERSION,
 } from "./types.js";
 import type { EventBus } from "../tools/types.js";
+import {
+  type TokenEstimator,
+  CharacterTokenEstimator,
+} from "./token-estimator.js";
 
 // ---------------------------------------------------------------------------
 // Internal constants
@@ -57,25 +61,6 @@ const DEFAULT_CONVERSATION_LIMIT = 50;
 
 /** Default user-fact list limit for load(). */
 const DEFAULT_USER_FACT_LIMIT = 200;
-
-// ---------------------------------------------------------------------------
-// Token estimation (Milestone 12 will replace with a proper counter)
-// ---------------------------------------------------------------------------
-
-/**
- * Rough character-to-token estimate (4 chars ≈ 1 token).
- * Used only for budgetUsed / budgetRemaining in the MemoryContext snapshot.
- * Milestone 12 replaces this with model-specific tokenisation.
- */
-function estimateTokens(value: unknown): number {
-  if (value === null || value === undefined) return 0;
-  if (Array.isArray(value) && value.length === 0) return 0;
-  try {
-    return Math.ceil(JSON.stringify(value).length / 4);
-  } catch {
-    return 0;
-  }
-}
 
 // ---------------------------------------------------------------------------
 // StorageKey construction helpers
@@ -173,10 +158,15 @@ function emptyContext(budget: ContextBudget, loadedAt: number): MemoryContext {
  *   const context = await manager.load(scope, budget);
  */
 export class DefaultMemoryManager implements MemoryManager {
+  private readonly estimator: TokenEstimator;
+
   constructor(
     private readonly provider: StorageProvider,
-    private readonly eventBus?: EventBus
-  ) {}
+    private readonly eventBus?: EventBus,
+    estimator?: TokenEstimator,
+  ) {
+    this.estimator = estimator ?? new CharacterTokenEstimator();
+  }
 
   // -------------------------------------------------------------------------
   // load()
@@ -248,12 +238,12 @@ export class DefaultMemoryManager implements MemoryManager {
           ? buildToolSummary(toolRecords[0]!)
           : null;
 
-      // Budget accounting (simple character-based estimate for now).
+      // Budget accounting — delegated to the injected TokenEstimator.
       const budgetUsed =
-        estimateTokens(session) +
-        estimateTokens(conversation) +
-        estimateTokens(userFacts) +
-        estimateTokens(toolSummary);
+        this.estimator.estimate(session) +
+        this.estimator.estimate(conversation) +
+        this.estimator.estimate(userFacts) +
+        this.estimator.estimate(toolSummary);
       const budgetRemaining = Math.max(
         0,
         budget.modelProfile.usableContextTokens - budgetUsed,
