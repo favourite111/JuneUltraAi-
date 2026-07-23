@@ -486,6 +486,21 @@ describe("DefaultMemoryManager.record()", () => {
     ).resolves.toBeUndefined();
   });
 
+  it("appends multiple conversation turns to the group-qualified key", async () => {
+    const groupScope: MemoryScope = {
+      ...SCOPE,
+      groupId: "group-7",
+    };
+    const turns = [makeTurn(1), makeTurn(2)];
+
+    await manager.record(groupScope, { conversationTurns: turns });
+
+    expect(provider.append).toHaveBeenCalledTimes(2);
+    for (const [key] of vi.mocked(provider.append).mock.calls) {
+      expectKeyShape(key as StorageKey, "conversation", "group-7");
+    }
+  });
+
   it("does not throw when provider.upsert rejects (best-effort)", async () => {
     vi.mocked(provider.upsert).mockRejectedValue(new Error("upsert failed"));
 
@@ -526,6 +541,16 @@ describe("DefaultMemoryManager.forget()", () => {
     vi.mocked(provider.delete).mockRejectedValue(new Error("db error"));
 
     await expect(manager.forget(SCOPE)).rejects.toBeInstanceOf(MemoryError);
+  });
+
+  it("deletes every tier for a bot-wide forget", async () => {
+    await manager.forgetBot({ tenantId: SCOPE.tenantId, botId: SCOPE.botId });
+
+    expect(provider.delete).toHaveBeenCalledOnce();
+    expect(vi.mocked(provider.delete).mock.calls[0]![0]).toEqual({
+      tenantId: SCOPE.tenantId,
+      botId: SCOPE.botId,
+    });
   });
 
   it("MemoryError carries operation 'forget'", async () => {

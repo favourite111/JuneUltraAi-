@@ -41,6 +41,8 @@ export interface MemoryScope {
   readonly botId: string;
   /** Isolates individual users within a bot. */
   readonly userId: string;
+  /** Optional group boundary for group-chat conversation history. */
+  readonly groupId?: string;
   /** Optional session boundary — used by the session tier. */
   readonly sessionId?: string;
   /** Unique per-request; used for write attribution in ToolExecutionRecord. */
@@ -88,6 +90,8 @@ export interface SessionMemory {
   readonly activeTopics: string[];
   readonly recentBotPhrases: string[];
   readonly greetingDone: boolean;
+  /** Temporary task inferred from the current session. */
+  readonly currentTask?: string;
 }
 
 /**
@@ -302,6 +306,8 @@ export const MEMORY_CONTEXT_VERSION = 2;
 export interface MemoryUpdates {
   readonly session?: Partial<SessionMemory>;
   readonly userFacts?: UserFact[];
+  /** Conversation turns to append in order after the response is prepared. */
+  readonly conversationTurns?: readonly ConversationTurn[];
   readonly toolOutputs?: ToolExecutionRecord[];
   readonly conversationTurn?: ConversationTurn;
   /** Knowledge records to upsert into the long_term_knowledge tier. */
@@ -358,6 +364,18 @@ export interface MemoryManager {
   record(scope: MemoryScope, updates: MemoryUpdates): Promise<void>;
 
   /**
+   * Clears only the conversation tier for one scoped conversation.
+   * Other user memory, including facts and knowledge, remains intact.
+   */
+  clearConversation(scope: MemoryScope): Promise<void>;
+
+  /**
+   * Clears all memory tiers belonging to a bot.
+   * Used by an explicit factory reset.
+   */
+  forgetBot(scope: Pick<MemoryScope, "tenantId" | "botId">): Promise<void>;
+
+  /**
    * Erases all memory for a given user across every tier.
    * Used to honour "forget me" / GDPR deletion requests.
    * Throws MemoryError on failure — the caller (admin route) must surface it.
@@ -394,7 +412,7 @@ export interface StorageKey {
 export interface ScopePrefix {
   readonly tenantId: string;
   readonly botId: string;
-  readonly userId: string;
+  readonly userId?: string;
 }
 
 export interface ListOptions {

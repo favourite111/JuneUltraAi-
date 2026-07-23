@@ -36,12 +36,17 @@ export class DecisionValidator {
 /**
  * Normalizes provider-specific errors into RuntimeErrorCode.
  */
-export function normalizeError(error: any): ToolError {
-  const message = error.message || "Unknown error";
+export function normalizeError(error: unknown): ToolError {
+  const errorRecord = error instanceof Error
+    ? { name: error.name, message: error.message }
+    : typeof error === "object" && error !== null
+      ? error as { name?: unknown; message?: unknown }
+      : {};
+  const message = typeof errorRecord.message === "string" ? errorRecord.message : "Unknown error";
   let code: RuntimeErrorCode = "UNKNOWN_ERROR";
   let retryable = false;
 
-  if (error.name === "AbortError" || message.includes("timeout") || message.includes("TIMEOUT")) {
+  if (errorRecord.name === "AbortError" || message.includes("timeout") || message.includes("TIMEOUT")) {
     code = "TIMEOUT";
     retryable = true;
   } else if (message.includes("rate limit") || message.includes("429")) {
@@ -60,7 +65,7 @@ export function normalizeError(error: any): ToolError {
     code,
     message,
     isRetryable: retryable,
-    details: { originalError: error.toString() }
+    details: { originalError: String(error) }
   };
 }
 

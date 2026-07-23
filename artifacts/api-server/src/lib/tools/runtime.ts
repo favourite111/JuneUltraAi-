@@ -155,7 +155,7 @@ export function createDeterministicAgentRuntime(
               circuitBreaker?.recordSuccess();
               context.metrics.record("llm_success");
               break; // Success, exit retry loop
-            } catch (rawError: any) {
+            } catch (rawError: unknown) {
               const normalized = normalizeError(rawError);
               if (normalized.code === "TIMEOUT") context.metrics.record("llm_timeout");
               

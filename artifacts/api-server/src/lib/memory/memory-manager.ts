@@ -98,6 +98,7 @@ function makeConversationKey(scope: MemoryScope): StorageKey {
     tenantId: scope.tenantId,
     botId: scope.botId,
     userId: scope.userId,
+    qualifier: scope.groupId,
   };
 }
 
@@ -446,14 +447,14 @@ export class DefaultMemoryManager implements MemoryManager {
       );
     }
 
-    // -- Conversation turn (append to ordered list) -------------------------
-    if (updates.conversationTurn !== undefined) {
+    // -- Conversation turns (append to ordered list) ------------------------
+    const conversationTurns = updates.conversationTurns ??
+      (updates.conversationTurn ? [updates.conversationTurn] : []);
+    for (const turn of conversationTurns) {
       writes.push(
-        this.provider
-          .append(makeConversationKey(scope), updates.conversationTurn)
-          .catch(() => {
-            // best-effort
-          }),
+        this.provider.append(makeConversationKey(scope), turn).catch(() => {
+          // best-effort
+        }),
       );
     }
 
@@ -521,6 +522,29 @@ export class DefaultMemoryManager implements MemoryManager {
       await this.provider.delete(makeScopePrefix(scope));
     } catch (cause) {
       throw new MemoryError("forget", scope, cause);
+    }
+  }
+
+  async clearConversation(scope: MemoryScope): Promise<void> {
+    try {
+      await this.provider.delete(makeConversationKey(scope));
+    } catch (cause) {
+      throw new MemoryError("forget", scope, cause);
+    }
+  }
+
+  async forgetBot(scope: Pick<MemoryScope, "tenantId" | "botId">): Promise<void> {
+    try {
+      await this.provider.delete({
+        tenantId: scope.tenantId,
+        botId: scope.botId,
+      });
+    } catch (cause) {
+      throw new MemoryError("forget", {
+        tenantId: scope.tenantId,
+        botId: scope.botId,
+        userId: "(all)",
+      }, cause);
     }
   }
 

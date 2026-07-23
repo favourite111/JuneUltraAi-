@@ -238,8 +238,9 @@ export class InMemoryStorageProvider implements StorageProvider {
         if (encodedKey.startsWith(prefix)) {
           const active = this.getActive(encodedKey);
           if (active && active.kind === "single") {
+            const session = active.value as Record<string, unknown>;
             sessions.push({
-              ...(active.value as any),
+              ...session,
               sessionId: active.originalKey.qualifier,
               lastActivityAt: active.updatedAt,
             } as T);
@@ -411,7 +412,7 @@ export class InMemoryStorageProvider implements StorageProvider {
         if (
           k.tenantId === prefix.tenantId &&
           k.botId === prefix.botId &&
-          k.userId === prefix.userId
+          (prefix.userId === undefined || k.userId === prefix.userId)
         ) {
           keysToDelete.push(encodedKey);
         }
