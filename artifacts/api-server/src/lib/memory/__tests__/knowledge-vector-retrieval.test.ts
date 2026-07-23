@@ -340,6 +340,42 @@ describe("KnowledgeManager provider orchestration", () => {
     ]);
     expect(new Set(results.map((record) => record.key)).size).toBe(results.length);
   });
+
+  it("deduplicates within a scope without crossing tenant, bot, or user boundaries", async () => {
+    const storage = new InMemoryStorageProvider();
+    const otherScope: MemoryScope = {
+      ...SCOPE,
+      tenantId: "other-tenant",
+      botId: "other-bot",
+      userId: "other-user",
+    };
+    const manager = new KnowledgeManager(storage);
+    const key = {
+      tier: "long_term_knowledge" as const,
+      tenantId: SCOPE.tenantId,
+      botId: SCOPE.botId,
+      userId: SCOPE.userId,
+    };
+    const otherKey = {
+      ...key,
+      tenantId: otherScope.tenantId,
+      botId: otherScope.botId,
+      userId: otherScope.userId,
+    };
+
+    await storage.upsert(key, "same-key", makeRecord("same-key", "tenant one"));
+    await storage.upsert(
+      otherKey,
+      "same-key",
+      makeRecord("same-key", "tenant two"),
+    );
+
+    const results = await manager.loadRelevant(SCOPE, "same-key");
+    const otherResults = await manager.loadRelevant(otherScope, "same-key");
+
+    expect(results.map((record) => record.value)).toEqual(["tenant one"]);
+    expect(otherResults.map((record) => record.value)).toEqual(["tenant two"]);
+  });
 });
 
 describe("DefaultMemoryManager knowledge boundary", () => {

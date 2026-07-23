@@ -242,14 +242,17 @@ export class KnowledgeManager {
 
     const deterministic = deterministicResult.value;
     const semantic = semanticResult.status === "fulfilled" ? semanticResult.value : [];
-    const seen = new Set(deterministic.map((record) => record.key));
+    const seen = new Set(
+      deterministic.map((record) => scopedRecordKey(scope, record.key)),
+    );
     const merged = [...deterministic];
 
     // VectorStorageProvider already returns semantic candidates in descending
     // score order. Semantic ordering is used only for semantic-only records.
     for (const record of semantic) {
-      if (!seen.has(record.key)) {
-        seen.add(record.key);
+      const identity = scopedRecordKey(scope, record.key);
+      if (!seen.has(identity)) {
+        seen.add(identity);
         merged.push(record);
       }
     }
@@ -505,4 +508,13 @@ export class KnowledgeManager {
 
 function normalizeText(value: string): string {
   return value.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function scopedRecordKey(scope: MemoryScope, recordKey: string): string {
+  return [
+    scope.tenantId,
+    scope.botId,
+    scope.userId,
+    recordKey,
+  ].join("\u0000");
 }

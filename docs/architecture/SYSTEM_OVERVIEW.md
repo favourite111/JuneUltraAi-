@@ -27,6 +27,7 @@ The design of JUNE_ULTRA_AI is guided by several key architectural principles:
 *   **Layered Design**: Components are organized into distinct layers with clear responsibilities and dependencies, promoting modularity, maintainability, and scalability.
 *   **Hybrid Intelligence**: Combines deterministic tool routing with flexible LLM-driven decision-making, allowing the system to leverage the strengths of both approaches.
 *   **Architecture Law #15 — Role Separation**: A provider translates, a manager orchestrates, and a runtime executes. Never swap these roles.
+*   **Architecture Law #17 — Retrieval Encapsulation**: Retrieval strategies are implementation details. Consumers ask for knowledge; they never select deterministic, semantic, or hybrid algorithms.
 *   **Structured Memory**: Implements a tiered memory system to manage conversational context, user facts, and tool execution records, enabling more coherent and personalized interactions.
 *   **Observability**: Integrates an Event Bus for emitting lifecycle events, providing insights into the system's internal workings and facilitating debugging and monitoring.
 *   **ADR-Driven Development**: Architectural decisions are formally documented using Architecture Decision Records (ADRs), ensuring transparency, traceability, and consistency in design choices.
