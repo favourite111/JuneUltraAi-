@@ -41,6 +41,14 @@ export interface AgentRuntimeDependencies extends ExecutionContextDependencies {
 
 export interface AgentRuntimeRequest extends ExecutionContextInput {
   readonly prompt: string;
+  /**
+   * Optional M17 planning decision. When present, the planner owns the
+   * tool/no-tool gate; the legacy router still resolves the concrete tool.
+   */
+  readonly planningDecision?: {
+    readonly needsTool: boolean;
+    readonly toolName?: string;
+  };
 }
 
 export interface CompletedRuntimeResponse {
@@ -116,10 +124,16 @@ export function createDeterministicAgentRuntime(
         payload: { prompt: request.prompt, timestamp: context.clock.now() },
       });
 
-      let routed = router(request.prompt);
+      let routed = request.planningDecision?.needsTool === false
+        ? null
+        : router(request.prompt);
 
       // If deterministic router has low confidence and hybrid intelligence is enabled, consult the LLM
-      if ((!routed || routed.confidence.score < confidenceThresholds.routerMinConfidence) && dependencies.hybridConfig?.enabled) {
+      if (
+        request.planningDecision?.needsTool !== false &&
+        (!routed || routed.confidence.score < confidenceThresholds.routerMinConfidence) &&
+        dependencies.hybridConfig?.enabled
+      ) {
         if (configuredModelProvider && configuredPromptManager) {
           context.metrics.record("llm_requests");
 

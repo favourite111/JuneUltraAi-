@@ -223,6 +223,27 @@ describe("Deterministic Agent Runtime Pipeline - Phase 3A Milestone 6", () => {
     ]);
   });
 
+  it("honors an M17 no-tool planning decision without invoking the router", async () => {
+    const router = vi.fn(() => {
+      throw new Error("router must not run for a no-tool plan");
+    });
+    const eventBus = new AgentEventBus();
+    const runtime = createDeterministicAgentRuntime({
+      clock: { now: () => 1_700_000_000_000 },
+      idGenerator: { next: () => "planned-request" },
+      eventBus,
+      router,
+    });
+
+    const response = await runtime.execute({
+      ...request("Explain anatomy"),
+      planningDecision: { needsTool: false },
+    });
+
+    expect(response.status).toBe("no_capability");
+    expect(router).not.toHaveBeenCalled();
+  });
+
   it("replays identical request inputs and dependency streams with the same lifecycle transcript", async () => {
     const buildRun = () => {
       const tool: Tool = {

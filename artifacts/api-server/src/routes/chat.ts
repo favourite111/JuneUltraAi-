@@ -16,6 +16,8 @@ import { extractKnowledge } from "../lib/memory/knowledge-extractor.js";
 import { scoreFact } from "../lib/memory/confidence-scorer.js";
 import { isSaneFact } from "../lib/memory/memory-sanity-check.js";
 import { analyzeSession } from "../lib/memory/session-analyzer.js";
+import { agentPlanner, type PlanningResult } from "../lib/planner/index.js";
+import { ToolRegistry } from "../lib/tools/registry.js";
 import {
   getOpenTopics,
   savePendingTopic,
@@ -64,6 +66,20 @@ function toConversationTurns(
     content: message.content,
     timestamp: message.ts * 1000,
   }));
+}
+
+function renderPlanningContext(planning: PlanningResult): string {
+  const steps = planning.plan
+    .map((item) => `${item.step}. ${item.description}`)
+    .join("\n");
+  return [
+    "PLANNING DECISION:",
+    `Intent: ${planning.intent}`,
+    `Confidence: ${planning.confidence.toFixed(2)}`,
+    `Memory needed: ${planning.needsMemory ? "yes" : "no"}`,
+    `Tool needed: ${planning.needsTool ? "yes" : "no"}`,
+    steps ? `Plan:\n${steps}` : "Plan: answer directly.",
+  ].join("\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -918,6 +934,28 @@ async function handleChat(req: Request, res: Response): Promise<void> {
     queryHint: prompt,
   };
   const memoryContext = await memoryManager.load(memoryScope, DEFAULT_CONTEXT_BUDGET);
+  const planning = agentPlanner.plan({
+    message: prompt,
+    sessionContext: memoryContext.session,
+    knowledge: memoryContext.knowledgeRecords,
+    availableTools: ToolRegistry.listTools().map((tool) => ({
+      name: tool.name,
+      description: tool.description,
+    })),
+    runtimeState: memoryContext,
+  });
+
+  if (planning.needsClarification) {
+    res.json({
+      success: true,
+      handledBy: "planner",
+      intent: planning.intent,
+      planning,
+      reply: planning.clarificationQuestion,
+      conversationKey: convKey,
+    });
+    return;
+  }
 
   const runtimeResponse = await deterministicToolRuntime.execute({
     prompt,
@@ -932,6 +970,19 @@ async function handleChat(req: Request, res: Response): Promise<void> {
       history: memoryContext.conversation,
     },
     memoryContext,
+    planningDecision: {
+      needsTool: planning.needsTool,
+      toolName: planning.toolName,
+    },
+    plannerState: {
+      intent: planning.intent,
+      confidence: planning.confidence,
+      needsMemory: planning.needsMemory,
+      needsTool: planning.needsTool,
+      needsClarification: planning.needsClarification,
+      toolName: planning.toolName,
+      plan: planning.plan.map((step) => ({ ...step })),
+    },
     eventBus,
     logger: req.log,
     metrics: {
@@ -970,6 +1021,7 @@ async function handleChat(req: Request, res: Response): Promise<void> {
       type: result.type,
       reply: result.reply,
       data: result.data,
+      planning,
       conversationKey: convKey,
     });
     return;
@@ -1031,7 +1083,15 @@ async function handleChat(req: Request, res: Response): Promise<void> {
     reply = metaReply;
   } else {
     const memCtxBlock = renderMemoryContext(memoryContext);
-    const aiPrompt = buildPromptFitted(prompt, history, userId, groupId, state, factsLine, memCtxBlock);
+    const aiPrompt = buildPromptFitted(
+      prompt,
+      history,
+      userId,
+      groupId,
+      state,
+      factsLine,
+      `${renderPlanningContext(planning)}\n${memCtxBlock}`,
+    );
 
     const AI_TIMEOUT_MS = 18_000;
     const controller    = new AbortController();
@@ -1073,13 +1133,14 @@ async function handleChat(req: Request, res: Response): Promise<void> {
           handledBy: "ai",
           reply: "Taking a bit long on my end 😅 try again in a sec",
           model: "JUNE_ULTRA_AI",
+          planning,
           conversationKey: convKey,
         });
         return;
       }
 
       req.log.error({ err }, "Chat endpoint error");
-      res.status(500).json({ success: false, error: "Internal error" });
+      res.status(500).json({ success: false, error: "Internal error", planning });
       return;
     }
   }
@@ -1159,6 +1220,7 @@ async function handleChat(req: Request, res: Response): Promise<void> {
     handledBy: "ai",
     reply,
     model: "JUNE_ULTRA_AI",
+    planning,
     conversationKey: convKey,
   });
 }
