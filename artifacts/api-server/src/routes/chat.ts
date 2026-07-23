@@ -4,7 +4,6 @@ import { requireApiKey } from "../middlewares/auth.js";
 import { rateLimit } from "../middlewares/rate-limit.js";
 import {
   buildConversationKey,
-  getHistory,
   appendMessages,
   resetConversation,
   resetAllConversations,
@@ -993,20 +992,18 @@ async function handleChat(req: Request, res: Response): Promise<void> {
     return;
   }
 
-  // Phase 3C — M13: getFacts() removed; user facts come from memoryContext.userFacts
+  // Phase 3C — M13: getHistory() and getFacts() removed; data comes from memoryContext.
   // (already loaded above via memoryManager.load() — no second DB round-trip needed).
-  const [rawHistory, openTopics] = await Promise.all([
-    getHistory(convKey),
-    getOpenTopics(botId, userId),
-  ]);
+  const openTopics = await getOpenTopics(botId, userId);
 
-  // Sanitize history messages loaded from the DB — they may have been stored
-  // before this fix was in place, so we clean them here rather than relying on
-  // the write path having been clean at storage time.
-  const history = rawHistory.map((m) => ({
-    ...m,
-    speaker: stripSurrogates(m.speaker),
-    content: stripSurrogates(m.content),
+  // memoryContext.conversation is already budgeted and sanitized by the MemoryManager.
+  // We map the ConversationTurn[] tier shape to the local Message[] shape expected
+  // by the legacy prompt and state builders.
+  const history: Message[] = memoryContext.conversation.map((turn) => ({
+    role: turn.role,
+    speaker: turn.role === "user" ? userId : "june",
+    content: turn.content,
+    ts: Math.floor(turn.timestamp / 1000),
   }));
 
   // AI loop guard — bail out before any AI call or state work if the bot
