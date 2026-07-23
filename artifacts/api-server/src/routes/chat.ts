@@ -17,6 +17,9 @@ import {
   type UserFact as MemoryUserFact,
 } from "../lib/memory/index.js";
 import { memoryManager } from "../lib/memory-singletons.js";
+import { extractKnowledge } from "../lib/memory/knowledge-extractor.js";
+import { scoreFact } from "../lib/memory/confidence-scorer.js";
+import { isSaneFact } from "../lib/memory/memory-sanity-check.js";
 import {
   extractFacts,
   deleteAllFacts,
@@ -1101,15 +1104,40 @@ async function handleChat(req: Request, res: Response): Promise<void> {
   ];
   await appendMessages(convKey, botId, userId, groupId, newMessages);
 
-  // Persist any new personal facts the user revealed — fire-and-forget, non-blocking
-  const newFacts = extractFacts(prompt);
-  if (newFacts.length > 0) {
-    // Phase 3C — M13: route new facts through the memory system instead of saveFacts().
-    // Both write to the same user_facts table; memoryManager.record() adds typed
-    // metadata (confidence, importance, source) needed by the decay service later.
+  // Milestone 14 — Knowledge Synthesis Pipeline
+  // Deterministic extraction -> Confidence scoring -> Sanity check -> Persistence
+  const rawKnowledge = extractKnowledge(prompt);
+  const synthesizedFacts = rawKnowledge
+    .map(scoreFact)
+    .filter(fact => isSaneFact(fact, memoryContext.userFacts))
+    .map(fact => ({
+      factId: randomUUID(),
+      key: fact.key,
+      value: fact.value,
+      confidence: fact.confidence,
+      importance: 0.8, // Default high importance for long-term facts
+      source: "explicit" as const,
+      confirmedAt: now * 1000,
+      createdAt: now * 1000,
+      sensitive: false,
+    }));
+
+  if (synthesizedFacts.length > 0) {
     void memoryManager.record(memoryScope, {
-      userFacts: newFacts.map(f => toLongTermUserFact(f, now * 1000)),
+      userFacts: synthesizedFacts,
     });
+  }
+
+  // Legacy fallback for simple regex patterns not yet covered by M14
+  const legacyFacts = extractFacts(prompt);
+  if (legacyFacts.length > 0) {
+    const existingKeys = new Set(synthesizedFacts.map(f => f.key));
+    const uniqueLegacy = legacyFacts.filter(f => !existingKeys.has(f.key));
+    if (uniqueLegacy.length > 0) {
+      void memoryManager.record(memoryScope, {
+        userFacts: uniqueLegacy.map(f => toLongTermUserFact(f, now * 1000)),
+      });
+    }
   }
 
   // Curiosity Memory: when June responds with curiosity, the user opened a thread
