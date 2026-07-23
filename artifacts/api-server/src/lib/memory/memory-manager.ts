@@ -217,10 +217,11 @@ export class DefaultMemoryManager implements MemoryManager {
   async load(scope: MemoryScope, budget: ContextBudget): Promise<MemoryContext> {
     const loadedAt = Date.now();
 
-    // Emit load started if bus is present. Note: context is null here as it's not yet created.
+    // Emit load started. context carries requestId so MemoryMetricsCollector
+    // can correlate load_started → load_completed latency across requests.
     this.eventBus?.emit({
       type: "memory.load_started",
-      context: null as any,
+      context: { requestId: scope.requestId } as any,
       payload: { scope, timestamp: loadedAt },
     });
 
@@ -346,7 +347,7 @@ export class DefaultMemoryManager implements MemoryManager {
 
       this.eventBus?.emit({
         type: "memory.load_completed",
-        context: null as any,
+        context: { requestId: scope.requestId } as any,
         payload: {
           version: context.version,
           budgetUsed: context.budgetUsed,
@@ -366,7 +367,7 @@ export class DefaultMemoryManager implements MemoryManager {
     } catch (err) {
       this.eventBus?.emit({
         type: "memory.load_failed",
-        context: null as any,
+        context: { requestId: scope.requestId } as any,
         payload: { error: err instanceof Error ? err.message : String(err), timestamp: Date.now() },
       });
       return emptyContext(budget, loadedAt);
@@ -390,7 +391,7 @@ export class DefaultMemoryManager implements MemoryManager {
   async record(scope: MemoryScope, updates: MemoryUpdates): Promise<void> {
     this.eventBus?.emit({
       type: "memory.record_started",
-      context: null as any,
+      context: { requestId: scope.requestId } as any,
       payload: { scope, timestamp: Date.now() },
     });
 
@@ -417,12 +418,12 @@ export class DefaultMemoryManager implements MemoryManager {
               // Second failure — observable event + record_failed; do not throw.
               this.eventBus?.emit({
                 type: "memory.write_conflict",
-                context: null as any,
+                context: { requestId: scope.requestId } as any,
                 payload: { tier: "session", retrying: false, timestamp: Date.now() },
               });
               this.eventBus?.emit({
                 type: "memory.record_failed",
-                context: null as any,
+                context: { requestId: scope.requestId } as any,
                 payload: {
                   error: `session (write conflict): ${secondErr instanceof Error ? secondErr.message : String(secondErr)}`,
                   timestamp: Date.now(),
@@ -487,7 +488,7 @@ export class DefaultMemoryManager implements MemoryManager {
 
     this.eventBus?.emit({
       type: "memory.record_completed",
-      context: null as any,
+      context: { requestId: scope.requestId } as any,
       payload: { tiersWritten, timestamp: Date.now() },
     });
   }

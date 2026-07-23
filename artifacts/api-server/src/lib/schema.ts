@@ -52,6 +52,21 @@ export async function ensureSchema(): Promise<void> {
   `;
   await sql`CREATE INDEX IF NOT EXISTS idx_facts_bot_user ON user_facts (bot_id, user_id)`;
 
+  // Long-term knowledge — durable synthesized facts about a user (Phase 3C, M13).
+  // KnowledgeManager reads and writes this table; schema.ts is the single source
+  // of truth so the table exists before any route handler runs.
+  await sql`
+    CREATE TABLE IF NOT EXISTS long_term_knowledge (
+      bot_id        TEXT        NOT NULL,
+      user_id       TEXT        NOT NULL,
+      record_key    TEXT        NOT NULL,
+      record_value  JSONB       NOT NULL,
+      updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (bot_id, user_id, record_key)
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_ltk_bot_user ON long_term_knowledge (bot_id, user_id)`;
+
   // Pending topics — unfinished conversational threads that June should follow up on.
   // Saved when June responds with curiosity (user starts a story); closed when the
   // user actually tells the story or the conversation is reset.

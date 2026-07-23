@@ -13,18 +13,13 @@ import {
 import { createDeterministicAgentRuntime } from "../lib/tools/runtime.js";
 import { AgentEventBus } from "../lib/tools/event-bus.js";
 import {
-  DefaultMemoryManager,
-  HashingEmbeddingProvider,
-  KnowledgeManager,
-  PostgresStorageProvider,
-  VectorStorageProvider,
   DEFAULT_CONTEXT_BUDGET,
+  type MemoryContext,
+  type UserFact as MemoryUserFact,
 } from "../lib/memory/index.js";
+import { memoryManager } from "../lib/memory-singletons.js";
 import {
   extractFacts,
-  saveFacts,
-  getFacts,
-  formatFactsForPrompt,
   deleteAllFacts,
 } from "../lib/user-memory.js";
 import {
@@ -42,22 +37,10 @@ const router: IRouter = Router();
 const SHIZO_API = "https://api.shizo.top/ai/gpt";
 const SHIZO_KEY = "shizo";
 
-// The composition root owns non-deterministic production providers. The
-// runtime itself receives them only through dependency injection, enabling
-// deterministic recordings and replay tests with alternate providers.
-const storageProvider = new PostgresStorageProvider();
-const vectorStorageProvider = new VectorStorageProvider();
-const knowledgeManager = new KnowledgeManager(storageProvider, {
-  embeddingProvider: new HashingEmbeddingProvider(),
-  vectorStorageProvider,
-});
-const memoryManager = new DefaultMemoryManager(
-  storageProvider,
-  undefined,
-  undefined,
-  undefined,
-  knowledgeManager,
-);
+// Memory subsystem singletons (storageProvider, knowledgeManager, memoryManager,
+// metricsCollector) live in lib/memory-singletons.ts so route handlers and the
+// stats endpoint share the same instances and persistent event bus.
+// memoryManager is imported above.
 
 const deterministicToolRuntime = createDeterministicAgentRuntime({
   clock: { now: () => Date.now() },
@@ -423,6 +406,7 @@ function buildPrompt(
   groupId: string | undefined,
   state: ConversationState,
   factsLine: string,
+  memoryContextBlock: string,
 ): string {
   const historyBlock =
     history.length > 0
@@ -581,6 +565,7 @@ TOOLS (real, working — never say "I can't" for these):
 - Text to PDF → "convert to pdf your text here" (user must include the actual text after the command)
 - QR code → "qr code for https://example.com" or "qr code for my number 0712345678"
 ${factsLine ? "\n" + factsLine : ""}
+${memoryContextBlock ? "\n" + memoryContextBlock : ""}
 Conversation State:
 ${stateBlock}
 
@@ -637,21 +622,94 @@ function buildPromptFitted(
   groupId: string | undefined,
   state: ConversationState,
   factsLine: string,
+  memoryContextBlock: string,
 ): string {
   for (let w = INITIAL_HISTORY_WINDOW; w >= 0; w -= 2) {
     const slice = w > 0 ? history.slice(-w) : [];
-    const built = buildPrompt(userMessage, slice, userId, groupId, state, factsLine);
+    const built = buildPrompt(userMessage, slice, userId, groupId, state, factsLine, memoryContextBlock);
     if (safeEncode(built).length <= MAX_PROMPT_CHARS) return built;
   }
 
   // Last resort: trim the user message itself
-  let bare    = buildPrompt(userMessage, [], userId, groupId, state, factsLine);
+  let bare    = buildPrompt(userMessage, [], userId, groupId, state, factsLine, memoryContextBlock);
   let trimmed = userMessage;
   while (safeEncode(bare).length > MAX_PROMPT_CHARS && trimmed.length > 100) {
     trimmed = trimmed.slice(0, Math.floor(trimmed.length * 0.75));
-    bare    = buildPrompt(trimmed + "… [trimmed]", [], userId, groupId, state, factsLine);
+    bare    = buildPrompt(trimmed + "… [trimmed]", [], userId, groupId, state, factsLine, memoryContextBlock);
   }
   return bare;
+}
+
+// ---------------------------------------------------------------------------
+// Memory-aware prompt helpers (Phase 3C — M13)
+// ---------------------------------------------------------------------------
+
+const MAX_FACTS_IN_PROMPT = 8;
+
+/**
+ * Formats MemoryContext.userFacts as a compact one-liner for prompt injection.
+ * Replaces the legacy formatFactsForPrompt(Record<string, string>) from user-memory.ts.
+ * Facts arrive pre-sorted importance × confidence desc from MemoryManager.load().
+ */
+function formatUserFactsForPrompt(facts: readonly MemoryUserFact[]): string {
+  if (facts.length === 0) return "";
+  const top = facts.slice(0, MAX_FACTS_IN_PROMPT);
+  return "Known facts about this user: " +
+    top.map(f => `${f.key}=${f.value}`).join(", ") + ".";
+}
+
+/**
+ * Renders MemoryContext knowledge records and tool summary into optional
+ * prompt sections.  Returns an empty string when no enrichment is available.
+ * Each section is deliberately brief to respect MAX_PROMPT_CHARS.
+ */
+function renderMemoryContext(ctx: MemoryContext): string {
+  const parts: string[] = [];
+
+  if (ctx.knowledgeRecords.length > 0) {
+    const lines = ctx.knowledgeRecords
+      .slice(0, 3)
+      .map(r => `- ${String(r.value).slice(0, 60)}${r.category ? ` [${r.category}]` : ""}`);
+    parts.push("Long-term knowledge:\n" + lines.join("\n"));
+  }
+
+  if (ctx.toolSummary) {
+    parts.push(`Recent tool: ${ctx.toolSummary}`);
+  }
+
+  return parts.join("\n");
+}
+
+// ---------------------------------------------------------------------------
+// Legacy fact converter (Phase 3C — M13)
+// Maps extractFacts() { key, value } pairs to the full MemoryUserFact shape
+// so new facts flow through memoryManager.record() instead of saveFacts().
+// ---------------------------------------------------------------------------
+
+const FACT_IMPORTANCE_MAP: Record<string, number> = {
+  name: 1.0, nickname: 1.0, language: 0.95,
+  from: 0.80, age: 0.70,
+  likes: 0.50, dislikes: 0.50, favorite: 0.50,
+};
+
+let _factIdSeq = 0;
+
+function toLongTermUserFact(
+  f: { key: string; value: string },
+  nowMs: number,
+): MemoryUserFact {
+  return {
+    factId:      `fact-${nowMs}-${++_factIdSeq}`,
+    key:         f.key,
+    value:       f.value,
+    confidence:  1.0,
+    importance:  FACT_IMPORTANCE_MAP[f.key] ?? 0.50,
+    source:      "explicit",
+    createdAt:   nowMs,
+    confirmedAt: nowMs,
+    sensitive:   false,
+    decayed:     false,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -886,16 +944,9 @@ async function handleChat(req: Request, res: Response): Promise<void> {
     const { result, tool } = runtimeResponse;
     const now = Math.floor(Date.now() / 1000);
     
-    // Phase 3B — record memory updates
+    // Phase 3C — M13: record tool execution only; conversation writes go through
+    // appendMessages() below to keep the JSONB column in a single Message format.
     void memoryManager.record(memoryScope, {
-      conversationTurn: {
-        turnId: randomUUID(),
-        requestId,
-        role: "assistant",
-        content: result.reply,
-        timestamp: now,
-        toolUsed: tool.name,
-      },
       toolOutputs: [{
         executionId: randomUUID(),
         requestId,
@@ -904,9 +955,9 @@ async function handleChat(req: Request, res: Response): Promise<void> {
         args: runtimeResponse.context.plannerState ?? {},
         result: result.data,
         reflectionDecision: "complete",
-        durationMs: 0, // TODO: track duration
+        durationMs: 0,
         timestamp: now,
-      }]
+      }],
     });
 
     const newMessages: Message[] = [
@@ -942,9 +993,10 @@ async function handleChat(req: Request, res: Response): Promise<void> {
     return;
   }
 
-  const [rawHistory, facts, openTopics] = await Promise.all([
+  // Phase 3C — M13: getFacts() removed; user facts come from memoryContext.userFacts
+  // (already loaded above via memoryManager.load() — no second DB round-trip needed).
+  const [rawHistory, openTopics] = await Promise.all([
     getHistory(convKey),
-    getFacts(botId, userId),
     getOpenTopics(botId, userId),
   ]);
 
@@ -969,7 +1021,7 @@ async function handleChat(req: Request, res: Response): Promise<void> {
   // into the single ConversationState object (Phase C consolidation).
   const derivedState = deriveConversationState(history, prompt);
   const state: ConversationState = { ...derivedState, pendingTopics: openTopics };
-  const factsLine = formatFactsForPrompt(facts);
+  const factsLine = formatUserFactsForPrompt(memoryContext.userFacts);
 
   // Auto-close: if the user is now telling the story they started < 2h ago, mark it done.
   if (state.userIntent === "telling_story" && openTopics.length > 0) {
@@ -985,7 +1037,8 @@ async function handleChat(req: Request, res: Response): Promise<void> {
   if (metaReply) {
     reply = metaReply;
   } else {
-    const aiPrompt = buildPromptFitted(prompt, history, userId, groupId, state, factsLine);
+    const memCtxBlock = renderMemoryContext(memoryContext);
+    const aiPrompt = buildPromptFitted(prompt, history, userId, groupId, state, factsLine, memCtxBlock);
 
     const AI_TIMEOUT_MS = 18_000;
     const controller    = new AbortController();
@@ -1053,7 +1106,14 @@ async function handleChat(req: Request, res: Response): Promise<void> {
 
   // Persist any new personal facts the user revealed — fire-and-forget, non-blocking
   const newFacts = extractFacts(prompt);
-  if (newFacts.length > 0) void saveFacts(botId, userId, newFacts);
+  if (newFacts.length > 0) {
+    // Phase 3C — M13: route new facts through the memory system instead of saveFacts().
+    // Both write to the same user_facts table; memoryManager.record() adds typed
+    // metadata (confidence, importance, source) needed by the decay service later.
+    void memoryManager.record(memoryScope, {
+      userFacts: newFacts.map(f => toLongTermUserFact(f, now * 1000)),
+    });
+  }
 
   // Curiosity Memory: when June responds with curiosity, the user opened a thread
   // they haven't finished yet — save it so June can naturally bring it back up later.
@@ -1066,16 +1126,21 @@ async function handleChat(req: Request, res: Response): Promise<void> {
     void savePendingTopic(botId, userId, topicText, importance, topicKey);
   }
 
-  // Phase 3B — record memory updates for AI response
+  // Phase 3C — M13: record session state in proper SessionMemory shape.
+  // Conversation history is written exclusively by appendMessages() above
+  // to keep the JSONB column in a single consistent Message format.
   void memoryManager.record(memoryScope, {
-    conversationTurn: {
-      turnId: randomUUID(),
-      requestId,
-      role: "assistant",
-      content: reply,
-      timestamp: now,
+    session: {
+      sessionId:          requestId,
+      lastActivityAt:     now * 1000,
+      userMood:           state.userMood,
+      conversationStage:  state.conversationStage,
+      personalityTemp:    state.personalityTemp,
+      questionChainDepth: state.questionChainDepth,
+      activeTopics:       state.topics,
+      recentBotPhrases:   state.recentBotPhrases,
+      greetingDone:       state.greetingDone,
     },
-    session: state, // Store conversation state in session memory
   });
 
   res.json({
