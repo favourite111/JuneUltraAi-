@@ -9,6 +9,15 @@ export { ConfidenceDecayService, computeDecayedConfidence } from "./confidence-d
 export type { DecaySweepResult } from "./confidence-decay.js";
 export { StoragePruner, DEFAULT_PRUNER_CONFIG } from "./storage-pruner.js";
 export type { StoragePrunerConfig, PruneResult } from "./storage-pruner.js";
+export { MemoryMetricsCollector } from "./memory-metrics-collector.js";
+export type {
+  NumericStats,
+  LoadMetricsSnapshot,
+  RecordMetricsSnapshot,
+  DecayMetricsSnapshot,
+  ForgetMetricsSnapshot,
+  MemoryMetricsSnapshot,
+} from "./memory-metrics-collector.js";
 export { CharacterTokenEstimator } from "./token-estimator.js";
 export type { TokenEstimator } from "./token-estimator.js";
 export { ExtractiveConversationSummarizer } from "./conversation-summarizer.js";
