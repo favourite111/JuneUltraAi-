@@ -29,6 +29,16 @@ describe("M17 Agent Planning Engine", () => {
     expect(result.needsClarification).toBe(false);
   });
 
+  it("plans memory recall for the apostrophe-form name question", () => {
+    const result = plan("What's my name?");
+
+    expect(result.intent).toBe("memory_recall");
+    expect(result.needsMemory).toBe(true);
+    expect(result.needsTool).toBe(false);
+    expect(result.needsClarification).toBe(false);
+    expect(result.plan.map((item) => item.action)).toEqual(["recall"]);
+  });
+
   it("creates a tool plan for web search requests", () => {
     const result = plan("Search latest Node.js");
 
@@ -56,6 +66,33 @@ describe("M17 Agent Planning Engine", () => {
     expect(Object.isFrozen(result.plan)).toBe(true);
     expect(Object.isFrozen(result.plan[0])).toBe(true);
     expect(Object.isFrozen(result.missingInformation)).toBe(true);
+  });
+
+  it("does not mutate or retain references to planning inputs", () => {
+    const sessionContext = {
+      sessionId: "session-1",
+      lastActivityAt: 1,
+      userMood: "calm",
+      conversationStage: "active",
+      personalityTemp: 0,
+      questionChainDepth: 0,
+      activeTopics: ["anatomy"],
+      recentBotPhrases: [],
+      greetingDone: true,
+    };
+    const knowledge = [{ key: "name", value: "Isaac" }];
+    const input = {
+      ...baseInput,
+      message: "What's my name?",
+      sessionContext,
+      knowledge,
+    };
+    const result = createAgentPlanner(new PlannerMetrics()).plan(input);
+
+    expect(input.sessionContext).toEqual(sessionContext);
+    expect(input.knowledge).toEqual(knowledge);
+    expect(result).not.toBe(input);
+    expect(result.plan).not.toBe((input as { plan?: unknown }).plan);
   });
 
   it("selects only the tool plan for mixed search and memory language", () => {
