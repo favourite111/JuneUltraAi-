@@ -110,7 +110,11 @@ export interface KnowledgeIndexReport {
   readonly scope: MemoryScope;
   /** Authoritative records with no corresponding vector. */
   readonly missing: readonly string[];
-  /** Records whose most recent indexing attempt failed in this process. */
+  /**
+   * Records whose most recent indexing attempt failed within the current
+   * process lifetime. Always empty after a restart — reconcile() reclassifies
+   * these as missing and repairs them on the next pass (Milestone 12 — B2).
+   */
   readonly pending: readonly string[];
   /** Vectors whose source fingerprint no longer matches authoritative storage. */
   readonly stale: readonly string[];
@@ -162,8 +166,6 @@ export class KnowledgeManager {
   private readonly nowFn: () => number;
   private readonly embeddingProvider?: EmbeddingProvider;
   private readonly vectorStorageProvider?: VectorStorageProviderContract;
-  // TODO(Milestone 12): persist pending-vector state for cross-process repair.
-  private readonly pendingVectors = new Map<string, KnowledgeVectorDrift>();
 
   constructor(
     private readonly provider: StorageProvider,
@@ -190,16 +192,9 @@ export class KnowledgeManager {
     await this.provider.upsert(this._key(scope), record.key, record);
 
     if (this.embeddingProvider && this.vectorStorageProvider) {
-      try {
-        await this.indexRecord(scope, record);
-        this.pendingVectors.delete(scopedRecordKey(scope, record.key));
-      } catch (error) {
-        this.pendingVectors.set(
-          scopedRecordKey(scope, record.key),
-          "pending-vector",
-        );
-        throw error;
-      }
+      // Vector indexing errors are thrown to the caller. reconcile() detects
+      // and repairs the missing vector on the next pass (Milestone 12 — B2).
+      await this.indexRecord(scope, record);
     }
   }
 
@@ -237,12 +232,12 @@ export class KnowledgeManager {
       .filter((vector) => !recordsByKey.has(vector.sourceId))
       .map((vector) => vector.sourceId);
 
+    // pending is always empty after a restart (Milestone 12 — B2).
+    // Records that failed indexing in a previous process appear as missing
+    // here and are repaired by the candidate loop below.
     for (const record of records) {
-      const identity = scopedRecordKey(scope, record.key);
       const vector = vectorsByKey.get(record.key);
-      if (this.pendingVectors.has(identity)) {
-        pending.push(record.key);
-      } else if (!vector) {
+      if (!vector) {
         missing.push(record.key);
       } else if (this.isInvalidVector(vector)) {
         invalid.push(record.key);
@@ -262,15 +257,13 @@ export class KnowledgeManager {
         if (!record) continue;
         try {
           await this.indexRecord(scope, record);
-          this.pendingVectors.delete(scopedRecordKey(scope, key));
           repaired.push(key);
         } catch {
-          this.pendingVectors.set(scopedRecordKey(scope, key), "pending-vector");
+          // Indexing failed again — will appear as missing on the next pass.
         }
       }
       for (const key of orphaned.slice(0, Math.max(0, batchSize - repaired.length))) {
         await vectorProvider.deleteVector(scope, key);
-        this.pendingVectors.delete(scopedRecordKey(scope, key));
         deleted.push(key);
       }
     }
@@ -426,7 +419,6 @@ export class KnowledgeManager {
       await this.provider.upsert(storageKey, record.key, record);
     }
     await this.vectorStorageProvider?.deleteVector(scope, key);
-    this.pendingVectors.delete(scopedRecordKey(scope, key));
 
     return true;
   }
@@ -442,11 +434,6 @@ export class KnowledgeManager {
   async removeAll(scope: MemoryScope): Promise<void> {
     await this.provider.delete(this._key(scope));
     await this.vectorStorageProvider?.deleteScope(scope);
-    for (const identity of this.pendingVectors.keys()) {
-      if (identity.startsWith(`${scope.tenantId}\u0000${scope.botId}\u0000${scope.userId}\u0000`)) {
-        this.pendingVectors.delete(identity);
-      }
-    }
   }
 
   // ---------------------------------------------------------------------------

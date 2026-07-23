@@ -146,7 +146,11 @@ describe("KnowledgeManager provider orchestration", () => {
     ]);
   });
 
-  it("tracks pending vectors and repairs them without changing authoritative storage", async () => {
+  it("surfaces failed-index records as missing and repairs them without changing authoritative storage", async () => {
+    // Milestone 12 — B2: pendingVectors Map removed. Records whose vector
+    // indexing fails appear as missing (not pending) on the next reconcile pass,
+    // because pending state is not persisted across calls. reconcile() detects
+    // and repairs them correctly regardless.
     const storage = new InMemoryStorageProvider();
     const vectors = new VectorStorageProvider();
     let shouldFail = true;
@@ -166,11 +170,15 @@ describe("KnowledgeManager provider orchestration", () => {
     await expect(manager.upsert(SCOPE, makeRecord("pending", "authoritative value")))
       .rejects.toThrow("temporary embedding failure");
 
+    // After a failed upsert the record is authoritative but has no vector.
+    // reconcile() reports it as missing (pending is always [] — no in-process tracking).
     const dryRun = await manager.reconcile({ scope: SCOPE, dryRun: true });
-    expect(dryRun.pending).toEqual(["pending"]);
+    expect(dryRun.pending).toEqual([]);
+    expect(dryRun.missing).toEqual(["pending"]);
     expect(dryRun.repaired).toEqual([]);
     expect(vectors.listIndexSize(SCOPE)).toBe(0);
 
+    // Once the embedding provider recovers, reconcile repairs the missing vector.
     shouldFail = false;
     const repaired = await manager.reconcile({ scope: SCOPE, batchSize: 1 });
     expect(repaired.repaired).toEqual(["pending"]);

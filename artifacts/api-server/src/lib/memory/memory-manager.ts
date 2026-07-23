@@ -60,11 +60,17 @@ const ALL_TIER_IDS: MemoryTierId[] = [
 ];
 
 /**
- * Default conversation list limit for load().
- * Keeps the hydration bounded without a budget-aware truncation loop.
- * Milestone 12 will replace this with a proper budget-driven sliding window.
+ * Per-turn lower-bound token estimate used to derive the storage fetch limit.
+ * Conservative (real turns average far more) so the fetch always over-provides
+ * enough raw material for applyConversationBudget() to fill the allocation.
  */
-const DEFAULT_CONVERSATION_LIMIT = 50;
+const MINIMUM_TURN_TOKEN_ESTIMATE = 10;
+
+/**
+ * Hard ceiling on conversation turns fetched per load() call regardless of
+ * budget allocation. Prevents unbounded storage reads for large-context models.
+ */
+const MAX_CONVERSATION_FETCH_LIMIT = 200;
 
 /** Default user-fact list limit for load(). */
 const DEFAULT_USER_FACT_LIMIT = 200;
@@ -205,8 +211,8 @@ export class DefaultMemoryManager implements MemoryManager {
    * (or the overall assembly throws), an empty MemoryContext is returned so
    * the pipeline can still run.
    *
-   * Milestone 12 will add proper budget-driven truncation; for now the context
-   * is assembled from whatever the provider returns within the list limits.
+   * The conversation fetch limit is derived from the budget allocation so the
+   * storage query adapts to the configured model's context window (Milestone 12).
    */
   async load(scope: MemoryScope, budget: ContextBudget): Promise<MemoryContext> {
     const loadedAt = Date.now();
@@ -221,6 +227,16 @@ export class DefaultMemoryManager implements MemoryManager {
     try {
       const queryHint = scope.queryHint;
 
+      // Budget-derived conversation fetch limit (Milestone 12 — A).
+      // Over-fetches slightly (conservative per-turn estimate) so
+      // applyConversationBudget() always has enough raw turns to fill the
+      // allocation. Capped at MAX_CONVERSATION_FETCH_LIMIT to prevent
+      // unbounded storage reads for large-context models.
+      const conversationFetchLimit = Math.min(
+        Math.ceil(budget.tierAllocations.conversation / MINIMUM_TURN_TOKEN_ESTIMATE),
+        MAX_CONVERSATION_FETCH_LIMIT,
+      );
+
       // Fetch all tiers concurrently; individual failures default to null / [].
       const [session, conversationDesc, userFactValues, toolRecords, rawKnowledge] =
         await Promise.all([
@@ -230,7 +246,7 @@ export class DefaultMemoryManager implements MemoryManager {
 
           this.provider
             .list<ConversationTurn>(makeConversationKey(scope), {
-              limit: DEFAULT_CONVERSATION_LIMIT,
+              limit: conversationFetchLimit,
               order: "desc",
               similarityQuery: queryHint,
             })
@@ -382,18 +398,39 @@ export class DefaultMemoryManager implements MemoryManager {
     const tiersWritten: MemoryTierId[] = [];
 
     // -- Session (single value, replace) ------------------------------------
+    // Retry once on any write failure. On a second failure emit
+    // memory.write_conflict (Milestone 12 — C) then give up; the response
+    // is already prepared so we must not throw.
     if (updates.session !== undefined) {
       writes.push(
-        this.provider
-          .write(makeSessionKey(scope), updates.session)
-          .then(() => { tiersWritten.push("session"); })
-          .catch((err) => {
-            this.eventBus?.emit({
-              type: "memory.record_failed",
-              context: null as any,
-              payload: { error: `session: ${err.message}`, timestamp: Date.now() },
-            });
-          }),
+        (async () => {
+          const sessionKey = makeSessionKey(scope);
+          try {
+            await this.provider.write(sessionKey, updates.session!);
+            tiersWritten.push("session");
+          } catch {
+            // First failure — retry once silently.
+            try {
+              await this.provider.write(sessionKey, updates.session!);
+              tiersWritten.push("session");
+            } catch (secondErr) {
+              // Second failure — observable event + record_failed; do not throw.
+              this.eventBus?.emit({
+                type: "memory.write_conflict",
+                context: null as any,
+                payload: { tier: "session", retrying: false, timestamp: Date.now() },
+              });
+              this.eventBus?.emit({
+                type: "memory.record_failed",
+                context: null as any,
+                payload: {
+                  error: `session (write conflict): ${secondErr instanceof Error ? secondErr.message : String(secondErr)}`,
+                  timestamp: Date.now(),
+                },
+              });
+            }
+          }
+        })()
       );
     }
 
