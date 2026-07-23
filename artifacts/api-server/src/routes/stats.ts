@@ -5,6 +5,7 @@ import { metricsCollector } from "../lib/memory-singletons.js";
 import { plannerMetrics } from "../lib/planner/index.js";
 import { reasonerMetrics } from "../lib/reasoner/index.js";
 import { orchestratorMetrics } from "../lib/orchestrator/index.js";
+import { toolIntelligenceMetrics } from "../lib/tool-intelligence/index.js";
 
 // Injected at build time by esbuild define — no runtime file I/O
 declare const __APP_VERSION__: string;
@@ -31,6 +32,7 @@ router.get("/", async (_req: Request, res: Response) => {
     planning:          plannerMetrics.snapshot(),
     reasoning:         reasonerMetrics.snapshot(),
     execution:         orchestratorMetrics.snapshot(),
+    tool_intelligence: toolIntelligenceMetrics.snapshot(),
   });
 });
 

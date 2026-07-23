@@ -6,6 +6,7 @@ import type {
   ToolError,
 } from "../tools/types.js";
 import type { ReasoningResult } from "../reasoner/reasoner-types.js";
+import type { ToolIntelligenceResult } from "../tool-intelligence/tool-intelligence-types.js";
 
 // ---------------------------------------------------------------------------
 // M19 — Execution Orchestrator types
@@ -53,6 +54,8 @@ export interface OrchestratorPlannerInput {
  * Invariants:
  *   - `planner` is authoritative (Planner decides WHAT to do)
  *   - `reasoning` is advisory only (Reasoner decides HOW to think — never changes execution path)
+ *   - `toolIntelligence` is advisory for WHICH tool — the Orchestrator uses its selectedTool
+ *     when present but always falls back to planner.toolName
  *   - The Orchestrator never writes memory, performs planning, or bypasses planner decisions
  */
 export interface OrchestratorInput {
@@ -61,6 +64,13 @@ export interface OrchestratorInput {
   readonly planner: OrchestratorPlannerInput;
   /** Advisory reasoning context from M18. Never alters the execution path. */
   readonly reasoning?: ReasoningResult;
+  /**
+   * M20 Tool Intelligence result. Optional — when present, the Orchestrator
+   * uses toolIntelligence.selectedTool to resolve the tool instead of looking
+   * up planner.toolName directly. Falls back to planner.toolName if absent or
+   * if selectedTool is null.
+   */
+  readonly toolIntelligence?: ToolIntelligenceResult;
   readonly context: ExecutionContext;
   readonly eventBus: EventBus;
 }

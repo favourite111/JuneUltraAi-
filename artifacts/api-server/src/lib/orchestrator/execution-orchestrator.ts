@@ -121,9 +121,17 @@ export function createExecutionOrchestrator(
           let tool: Tool | null = null;
           let toolArgs: unknown = planner.toolArgs ?? {};
 
-          if (planner.toolName) {
-            // Planner authority: planner selected the tool — use it directly.
-            tool = ToolRegistry.getTool(planner.toolName) ?? null;
+          // M20: use Tool Intelligence selectedTool when provided, falling back
+          // to the Planner's nomination. Both paths end in a registry lookup —
+          // no execution happens here.
+          const resolvedToolName =
+            input.toolIntelligence?.selectedTool ?? planner.toolName;
+
+          if (resolvedToolName) {
+            // Planner authority (possibly refined by Tool Intelligence): look up
+            // the tool by the resolved name. Tool Intelligence decides WHICH
+            // tool; the Orchestrator still executes via ToolRegistry.
+            tool = ToolRegistry.getTool(resolvedToolName) ?? null;
           } else {
             // Legacy / non-M17 path: try deterministic router then LLM fallback.
             const deterministicRouted = router(prompt);
@@ -162,7 +170,7 @@ export function createExecutionOrchestrator(
               step:     planStep.step,
               executor: "tool",
               code:     "TOOL_NOT_FOUND",
-              message:  `Tool "${planner.toolName ?? "unknown"}" is not registered.`,
+              message:  `Tool "${resolvedToolName ?? planner.toolName ?? "unknown"}" is not registered.`,
             });
             outputs.push({ step: planStep.step, executor: "tool", success: false, durationMs: 0 });
             break;
