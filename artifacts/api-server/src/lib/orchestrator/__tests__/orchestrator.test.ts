@@ -1,8 +1,8 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { createExecutionOrchestrator } from "../execution-orchestrator.js";
+import type { OrchestratorExecutors } from "../execution-orchestrator.js";
 import { OrchestratorMetrics } from "../orchestrator-metrics.js";
 import type {
-  OrchestratorExecutors,
   OrchestratorInput,
   OrchestratorPlannerInput,
   ToolExecutionOutput,
@@ -10,6 +10,7 @@ import type {
 } from "../orchestrator-types.js";
 import type { ExecutionContext, EventBus, Tool, ToolResult } from "../../tools/types.js";
 import type { ReasoningResult } from "../../reasoner/reasoner-types.js";
+import { ToolRegistry } from "../../tools/registry.js";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -120,6 +121,12 @@ const baseConfig = {
   confidenceThresholds: { routerMinConfidence: 0.6, llmMinConfidence: 0.7 } as typeof import("../../tools/types.js").DEFAULT_CONFIDENCE_THRESHOLDS,
   clock: { now: () => Date.now() },
 };
+
+// Register the mock "weather" tool so ToolRegistry.getTool("weather") succeeds.
+// The orchestrator looks up the tool by name before calling the injected executor.
+beforeEach(() => {
+  ToolRegistry.register(makeTool("weather"));
+});
 
 // ---------------------------------------------------------------------------
 // M19-G Test 1 — Single tool execution

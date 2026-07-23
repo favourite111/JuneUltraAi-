@@ -109,12 +109,6 @@ export function createDeterministicAgentRuntime(
       const eventBus = request.eventBus ?? configuredEventBus;
       const context  = createExecutionContext({ ...request, eventBus }, dependencies);
 
-      eventBus.emit({
-        type:    "router.started",
-        context,
-        payload: { prompt: request.prompt, timestamp: context.clock.now() },
-      });
-
       // Derive the planner input from M17 planningDecision + plannerState.
       const ps = request.plannerState as {
         intent?:      string;
@@ -123,30 +117,42 @@ export function createDeterministicAgentRuntime(
         plan?:        Array<{ step: number; action: string; description: string; toolName?: string }>;
       } | undefined;
 
-      const result = await orchestrator.execute({
-        prompt: request.prompt,
-        planner: {
-          needsTool:   request.planningDecision?.needsTool   ?? ps?.needsTool   ?? false,
-          toolName:    request.planningDecision?.toolName,
-          toolArgs:    request.planningDecision?.toolArgs,
-          intent:      ps?.intent      ?? "general_answer",
-          needsMemory: ps?.needsMemory ?? false,
-          plan:        ps?.plan        ?? [],
-        },
-        reasoning: request.reasoningResult,
-        context,
-        eventBus,
-      });
+      const plannerInput = {
+        // Default needsTool to true when no explicit decision is present so the
+        // orchestrator falls through to the deterministic router (legacy path).
+        // An explicit `planningDecision.needsTool === false` is respected as-is.
+        needsTool:   request.planningDecision?.needsTool   ?? ps?.needsTool   ?? true,
+        toolName:    request.planningDecision?.toolName,
+        toolArgs:    request.planningDecision?.toolArgs,
+        intent:      ps?.intent      ?? "general_answer",
+        needsMemory: ps?.needsMemory ?? false,
+        plan:        ps?.plan        ?? [],
+      };
 
-      // Emit router.completed to preserve the pre-M19 event contract.
+      // Emit router.started then router.completed BEFORE the orchestrator runs so
+      // that planner/tool events (emitted inside the orchestrator) are ordered
+      // correctly in the event stream — matching the pre-M19 contract.
+      eventBus.emit({
+        type:    "router.started",
+        context,
+        payload: { prompt: request.prompt, timestamp: context.clock.now() },
+      });
       eventBus.emit({
         type:    "router.completed",
         context,
         payload: {
-          toolId:     result.bridgeTool?.name ?? null,
-          confidence: result.handledBy === "tool" ? 1 : 0,
+          toolId:     plannerInput.toolName ?? null,
+          confidence: plannerInput.needsTool ? 1 : 0,
           timestamp:  context.clock.now(),
         },
+      });
+
+      const result = await orchestrator.execute({
+        prompt:    request.prompt,
+        planner:   plannerInput,
+        reasoning: request.reasoningResult,
+        context,
+        eventBus,
       });
 
       // Minimal AgentPlan stub — satisfies the response contract without
@@ -158,6 +164,30 @@ export function createDeterministicAgentRuntime(
       };
 
       // Translate ExecutionResult → AgentRuntimeResponse.
+
+      // Clarification path: LLM asked for more info — return as a failed response
+      // to preserve the pre-M19 CLARIFICATION_NEEDED contract.
+      const clarificationError = result.errors.find(e => e.code === "CLARIFICATION_NEEDED");
+      if (clarificationError) {
+        const stubTool: Tool = {
+          name:        "llm_clarification",
+          description: "LLM clarification sentinel",
+          match:       () => null,
+          execute:     async () => ({ type: "text" as const, reply: "", data: {} }),
+        };
+        return {
+          status: "failed",
+          context,
+          plan:   minimalPlan,
+          tool:   stubTool,
+          error: {
+            code:        "CLARIFICATION_NEEDED",
+            message:     clarificationError.message,
+            isRetryable: false,
+          },
+        };
+      }
+
       if (result.handledBy === "tool") {
         if (result.success && result.bridgeTool && result.bridgeToolResult) {
           return {

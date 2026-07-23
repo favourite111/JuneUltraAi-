@@ -10,6 +10,7 @@ import {
 import {
   createLLMExecutor,
   type LLMExecutorConfig,
+  type LLMExecutorOutput,
   type OrchestratorLLMExecutor,
 } from "./executors/llm-executor.js";
 import {
@@ -132,13 +133,23 @@ export function createExecutionOrchestrator(
             } else {
               // LLM tool selection (hybrid intelligence path).
               const llmOutput = await llmExec.execute({ step: planStep.step, context, eventBus });
-              outputs.push(llmOutput);
+              // Push only the base ExecutionOutput fields — LLMExecutorOutput.selectedTool
+              // contains a Tool with function properties that cannot be structuredClone'd.
+              outputs.push({
+                step:      llmOutput.step,
+                executor:  llmOutput.executor,
+                success:   llmOutput.success,
+                durationMs: llmOutput.durationMs,
+              });
               if (!llmOutput.success || !llmOutput.selectedTool) {
+                // Propagate clarification requests so the runtime can translate them
+                // into a CLARIFICATION_NEEDED failed response.
+                const clarQ = (llmOutput as LLMExecutorOutput).clarificationQuestion;
                 errors.push({
                   step:     planStep.step,
                   executor: "llm_selection",
-                  code:     "NO_TOOL_SELECTED",
-                  message:  "Neither the deterministic router nor the LLM could select a tool.",
+                  code:     clarQ ? "CLARIFICATION_NEEDED" : "NO_TOOL_SELECTED",
+                  message:  clarQ ?? "Neither the deterministic router nor the LLM could select a tool.",
                 });
                 break;
               }

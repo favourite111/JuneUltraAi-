@@ -30,6 +30,7 @@ router.get("/", async (_req: Request, res: Response) => {
     memory:            metricsCollector.snapshot(),
     planning:          plannerMetrics.snapshot(),
     reasoning:         reasonerMetrics.snapshot(),
+    execution:         orchestratorMetrics.snapshot(),
   });
 });
 

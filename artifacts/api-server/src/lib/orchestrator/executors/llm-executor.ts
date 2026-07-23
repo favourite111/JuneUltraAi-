@@ -39,6 +39,8 @@ export interface LLMExecutorOutput extends ExecutionOutput {
   readonly executor: "llm_selection";
   /** The tool the LLM selected, if any. Null when LLM returned no usable decision. */
   readonly selectedTool: Tool | null;
+  /** Present when the LLM explicitly requested clarification instead of selecting a tool. */
+  readonly clarificationQuestion?: string;
 }
 
 export interface OrchestratorLLMExecutor {
@@ -155,6 +157,15 @@ export function createLLMExecutor(config: LLMExecutorConfig): OrchestratorLLMExe
           return { step, executor: "llm_selection", success: true, durationMs: clock.now() - start, selectedTool: selected };
         }
         context.metrics.record("fallback_count");
+      }
+
+      // Propagate clarification requests so the runtime can return CLARIFICATION_NEEDED.
+      if (llmDecision.type === "clarification" && "clarificationQuestion" in llmDecision) {
+        return {
+          step, executor: "llm_selection", success: false,
+          durationMs: clock.now() - start, selectedTool: null,
+          clarificationQuestion: llmDecision.clarificationQuestion as string | undefined,
+        };
       }
 
       return { step, executor: "llm_selection", success: false, durationMs: clock.now() - start, selectedTool: null };

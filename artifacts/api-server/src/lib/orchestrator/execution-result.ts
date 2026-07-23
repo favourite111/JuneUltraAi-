@@ -17,15 +17,34 @@ function deepFreeze<T>(value: T, seen = new WeakSet<object>()): T {
   return Object.freeze(value);
 }
 
-/** Produces a deep-frozen, structuredClone'd snapshot of an ExecutionResult. */
+/**
+ * Produces a deep-frozen, structuredClone'd snapshot of an ExecutionResult.
+ *
+ * Bridge fields (bridgeTool, bridgeToolResult, bridgeToolError) are excluded from
+ * structuredClone because Tool objects contain function properties (match, execute)
+ * that cannot be cloned. They are re-attached after cloning and frozen in place.
+ */
 export function makeExecutionResult(result: ExecutionResult): ExecutionResult {
-  const snapshot: ExecutionResult = {
-    ...result,
+  const { bridgeTool, bridgeToolResult, bridgeToolError, ...cloneable } = result;
+
+  const snapshot = {
+    ...cloneable,
     outputs:     Object.freeze([...result.outputs]),
     toolResults: Object.freeze([...result.toolResults]),
     errors:      Object.freeze([...result.errors]),
   };
-  return deepFreeze(structuredClone(snapshot));
+
+  const cloned = structuredClone(snapshot);
+
+  // Re-attach bridge fields that were stripped before cloning.
+  const full: ExecutionResult = {
+    ...cloned,
+    ...(bridgeTool       !== undefined && { bridgeTool }),
+    ...(bridgeToolResult !== undefined && { bridgeToolResult }),
+    ...(bridgeToolError  !== undefined && { bridgeToolError }),
+  };
+
+  return deepFreeze(full);
 }
 
 // ---------------------------------------------------------------------------

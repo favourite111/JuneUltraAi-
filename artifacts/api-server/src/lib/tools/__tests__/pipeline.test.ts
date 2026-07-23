@@ -106,14 +106,8 @@ describe("Deterministic Agent Runtime Pipeline - Phase 3A Milestone 6", () => {
     if (response.status !== "completed") throw new Error("Expected completed response");
     expect(response.tool.name).toBe("success-tool");
     expect(response.result).toEqual(successResult);
-    expect(response.plan.steps).toEqual([
-      {
-        stepId: "step-1",
-        capabilityId: "success-tool",
-        inputs: { value: "input" },
-        expectedOutputs: {},
-      },
-    ]);
+    // M19: Runtime returns a minimal plan stub (steps are owned by the ExecutionOrchestrator).
+    expect(response.plan.steps).toEqual([]);
     expect(Object.isFrozen(response.context)).toBe(true);
     expect(execute).toHaveBeenCalledTimes(1);
     expect(eventTypes(events)).toEqual([

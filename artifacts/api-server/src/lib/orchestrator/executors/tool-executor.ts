@@ -52,14 +52,9 @@ export function createOrchestratorToolExecutor(): OrchestratorToolExecutor {
       const { step, prompt, tool, args, context, eventBus } = input;
       const start = context.clock.now();
 
-      eventBus.emit({
-        type:    "tool.selected",
-        context,
-        payload: { toolId: tool.name, args, timestamp: start },
-      });
-
-      // Use the existing deterministic planner to create a properly-typed AgentPlanStep.
-      // This is the same call the runtime made — it constrains planning to the one selected tool.
+      // Run the internal planner first so that planner.started / planner.completed
+      // events fire before tool.selected — this matches the pre-M19 event ordering
+      // that existing pipeline tests rely on.
       const planner = createPlanner(context, {
         selectedTool: {
           tool,
@@ -69,6 +64,13 @@ export function createOrchestratorToolExecutor(): OrchestratorToolExecutor {
       });
       const plan       = planner.plan(prompt);
       const planStep   = plan.steps[0];
+
+      // Emit tool.selected AFTER planner events (preserves pre-M19 event ordering).
+      eventBus.emit({
+        type:    "tool.selected",
+        context,
+        payload: { toolId: tool.name, args, timestamp: start },
+      });
 
       if (!planStep) {
         return {
