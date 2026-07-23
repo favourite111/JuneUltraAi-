@@ -1,0 +1,129 @@
+At this point, I'd pause coding for a moment and look at where the architecture stands.
+
+You've completed and frozen:
+
+✅ Phase 3A — Deterministic Runtime
+
+✅ Phase 3B — Hybrid Memory Architecture
+
+✅ Phase 3C M1 — Accurate Token Budgeting
+
+✅ Phase 3C M2 — Conversation Compression
+
+✅ Phase 3C M3 — Semantic Retrieval
+
+✅ Phase 3C M4 — Confidence Decay
+
+✅ Phase 3C M5 — Storage Hygiene
+
+✅ Phase 3C M6 — Memory Metrics
+
+
+That's eight major milestones already.
+
+My recommendation
+
+I wouldn't jump straight into RAG.
+
+The next step should be building the Long-Term Knowledge layer that RAG will eventually search.
+
+Think of it like this:
+
+User
+   │
+   ▼
+Conversation Memory
+   │
+   ▼
+Conversation Summary
+   │
+   ▼
+Long-Term Knowledge
+   │
+   ▼
+Vector Store (future)
+   │
+   ▼
+Embeddings (future)
+   │
+   ▼
+RAG (future)
+
+Without that middle layer, you'd end up embedding raw conversations, which becomes expensive and noisy.
+
+Phase 3C – Milestone 7
+
+I would call it:
+
+Long-Term Knowledge Foundation
+
+Its responsibilities would be:
+
+Introduce a new LONG_TERM_KNOWLEDGE memory tier.
+
+Create a KnowledgeRecord model.
+
+Build a KnowledgeManager.
+
+Store durable, summarized knowledge—not raw chats.
+
+Keep everything provider-agnostic.
+
+Support the existing storage providers.
+
+No embeddings.
+
+No vector database.
+
+No LLM calls.
+
+Deterministic only.
+
+
+Examples of knowledge records:
+
+"User prefers concise responses."
+
+"User is studying nursing."
+
+"User is building JUNE_ULTRA_AI."
+
+"User prefers Node.js examples."
+
+
+These are durable facts synthesized from conversations, not individual messages.
+
+Why this before RAG?
+
+Because once you later add embeddings, you'll simply embed knowledge records instead of thousands of raw conversation turns. That makes retrieval:
+
+Faster
+
+Cheaper
+
+More accurate
+
+Easier to maintain
+
+
+After Milestone 7
+
+The roadmap would naturally become:
+
+✅ M7 — Long-Term Knowledge Foundation
+
+⏳ M8 — Vector Storage Abstraction
+
+⏳ M9 — Embedding Providers
+
+⏳ M10 — Hybrid Semantic Retrieval (RAG)
+
+⏳ M11 — Memory Optimization & Production Hardening
+
+
+
+---
+
+One more suggestion
+
+You're getting close to a v2.0 architecture. Before diving into RAG, I'd create a new ADR (for example, ADR-006) dedicated to Long-Term Knowledge and future RAG. That way, the design is agreed upon before implementation, just as you did with ADR-005. It will keep the project disciplined and prevent architectural drift as the AI grows.

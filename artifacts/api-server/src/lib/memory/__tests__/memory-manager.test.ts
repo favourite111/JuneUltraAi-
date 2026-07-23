@@ -36,7 +36,7 @@
  *     - provider returns "ok" → status "ok", all tiers "ok"
  *     - provider returns "degraded" → status "degraded", all tiers "degraded"
  *     - provider returns "unavailable" → status "unavailable", all tiers "unavailable"
- *     - returned tiers include all five MemoryTierId values
+ *     - returned tiers include all six MemoryTierId values
  *
  * Strategy:
  *   Uses a hand-rolled FakeStorageProvider implementing StorageProvider.
@@ -565,6 +565,7 @@ describe("DefaultMemoryManager.health()", () => {
     "conversation",
     "user_profile",
     "tool_execution",
+    "long_term_knowledge",
   ];
 
   let provider: StorageProvider;
@@ -615,7 +616,7 @@ describe("DefaultMemoryManager.health()", () => {
     }
   });
 
-  it("MemoryHealthStatus.tiers contains exactly the five MemoryTierId values", async () => {
+  it("MemoryHealthStatus.tiers contains exactly the six MemoryTierId values", async () => {
     const result = await manager.health();
 
     expect(Object.keys(result.tiers).sort()).toEqual([...ALL_TIERS].sort());

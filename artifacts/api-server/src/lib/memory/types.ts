@@ -22,7 +22,8 @@ export type MemoryTierId =
   | "session"
   | "conversation"
   | "user_profile"
-  | "tool_execution";
+  | "tool_execution"
+  | "long_term_knowledge";
 
 // ---------------------------------------------------------------------------
 // Scope & identity
@@ -157,6 +158,81 @@ export const DEFAULT_IMPORTANCE_SCORES: Record<string, number> = {
   "preferences.*":     0.15,
 };
 
+// ---------------------------------------------------------------------------
+// Long-Term Knowledge tier
+// ---------------------------------------------------------------------------
+
+/**
+ * High-level category of a knowledge record.
+ * Governs importance defaults and future retrieval strategies.
+ */
+export type KnowledgeCategory =
+  | "preference"   // How the user likes things done ("prefers concise answers")
+  | "fact"         // A durable truth about the user ("is a nursing student")
+  | "skill"        // What the user knows or can do ("knows TypeScript")
+  | "context"      // Current project or situational context ("building JUNE_ULTRA_AI")
+  | "goal";        // What the user is working toward ("wants to deploy by Q4")
+
+/**
+ * How the knowledge record was originally obtained.
+ */
+export type KnowledgeSource =
+  | "conversation"  // Synthesized from one or more conversation turns
+  | "explicit"      // User stated it directly, unprompted
+  | "inferred";     // Inferred from behavioural patterns
+
+/**
+ * A durable, synthesized piece of knowledge about the user.
+ *
+ * Unlike ConversationTurn (ephemeral) or UserFact (structured KV pair),
+ * a KnowledgeRecord is a free-form observation expressed as a human-readable
+ * string — optimised for future semantic embedding and retrieval (Milestones
+ * 8–10).
+ *
+ * version — incremented on every mutation; used for optimistic merge in
+ *           KnowledgeManager.merge().
+ * expiresAt — optional TTL; records past this wall-clock timestamp are
+ *             filtered out of MemoryContext by MemoryManager.load().
+ * tags — free-form labels for future category-based retrieval.
+ */
+export interface KnowledgeRecord {
+  readonly recordId:    string;
+  /**
+   * Stable, namespaced key unique within a scope.
+   * Convention: "<category>.<descriptor>", e.g. "preference.verbosity".
+   */
+  readonly key:         string;
+  /** Human-readable summary of the knowledge. */
+  readonly value:       string;
+  readonly category:    KnowledgeCategory;
+  /** 0.0–1.0 — certainty that this record is currently accurate. */
+  readonly confidence:  number;
+  /** 0.0–1.0 — retrieval priority weight (higher = injected first). */
+  readonly importance:  number;
+  readonly source:      KnowledgeSource;
+  /** Free-form labels for filtering. May be empty. */
+  readonly tags:        readonly string[];
+  readonly createdAt:   number;
+  readonly updatedAt:   number;
+  readonly confirmedAt?: number;
+  /** Optional expiry epoch (ms). Null / undefined = never expires. */
+  readonly expiresAt?:  number;
+  /** Incremented on each upsert; used by KnowledgeManager.merge(). */
+  readonly version:     number;
+}
+
+/**
+ * Default importance scores per KnowledgeCategory.
+ * Used by callers to assign importance when creating KnowledgeRecords.
+ */
+export const DEFAULT_KNOWLEDGE_IMPORTANCE: Record<KnowledgeCategory, number> = {
+  goal:       0.90,
+  context:    0.85,
+  fact:       0.80,
+  skill:      0.75,
+  preference: 0.70,
+};
+
 /**
  * Tamper-evident audit record of one tool invocation.
  * Written by MemoryManager.record() after reflection completes.
@@ -196,6 +272,11 @@ export interface MemoryContext {
   readonly conversation: readonly ConversationTurn[];
   /** Active (non-decayed) user facts, sorted by importance × confidence desc. */
   readonly userFacts: readonly UserFact[];
+  /**
+   * Durable synthesized knowledge records, sorted by importance × confidence desc.
+   * Non-expired only; future Milestones will rank these via vector similarity.
+   */
+  readonly knowledgeRecords: readonly KnowledgeRecord[];
   /** Short extractive summary of the most recent tool invocation, or null. */
   readonly toolSummary: string | null;
   /** Tokens consumed by this context snapshot. */
@@ -207,7 +288,7 @@ export interface MemoryContext {
 }
 
 /** Increment on every structural change to MemoryContext. */
-export const MEMORY_CONTEXT_VERSION = 1;
+export const MEMORY_CONTEXT_VERSION = 2;
 
 // ---------------------------------------------------------------------------
 // Updates — what the route handler passes to MemoryManager.record()
@@ -223,6 +304,8 @@ export interface MemoryUpdates {
   readonly userFacts?: UserFact[];
   readonly toolOutputs?: ToolExecutionRecord[];
   readonly conversationTurn?: ConversationTurn;
+  /** Knowledge records to upsert into the long_term_knowledge tier. */
+  readonly knowledgeRecords?: readonly KnowledgeRecord[];
 }
 
 // ---------------------------------------------------------------------------

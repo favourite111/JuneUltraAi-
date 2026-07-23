@@ -18,6 +18,7 @@
 import {
   type ContextBudget,
   type ConversationTurn,
+  type KnowledgeRecord,
   type MemoryContext,
   type MemoryHealthStatus,
   type MemoryManager,
@@ -54,6 +55,7 @@ const ALL_TIER_IDS: MemoryTierId[] = [
   "conversation",
   "user_profile",
   "tool_execution",
+  "long_term_knowledge",
 ];
 
 /**
@@ -65,6 +67,9 @@ const DEFAULT_CONVERSATION_LIMIT = 50;
 
 /** Default user-fact list limit for load(). */
 const DEFAULT_USER_FACT_LIMIT = 200;
+
+/** Default long-term knowledge list limit for load(). */
+const DEFAULT_KNOWLEDGE_LIMIT = 200;
 
 // ---------------------------------------------------------------------------
 // StorageKey construction helpers
@@ -107,6 +112,15 @@ function makeToolExecutionKey(scope: MemoryScope): StorageKey {
   };
 }
 
+function makeLongTermKnowledgeKey(scope: MemoryScope): StorageKey {
+  return {
+    tier: "long_term_knowledge",
+    tenantId: scope.tenantId,
+    botId: scope.botId,
+    userId: scope.userId,
+  };
+}
+
 function makeScopePrefix(scope: MemoryScope): ScopePrefix {
   return {
     tenantId: scope.tenantId,
@@ -139,6 +153,7 @@ function emptyContext(budget: ContextBudget, loadedAt: number): MemoryContext {
     session: null,
     conversation: [],
     userFacts: [],
+    knowledgeRecords: [],
     toolSummary: null,
     budgetUsed: 0,
     budgetRemaining: budgetTotal,
@@ -209,7 +224,7 @@ export class DefaultMemoryManager implements MemoryManager {
       const queryHint = scope.queryHint;
 
       // Fetch all tiers concurrently; individual failures default to null / [].
-      const [session, conversationDesc, userFactValues, toolRecords] =
+      const [session, conversationDesc, userFactValues, toolRecords, rawKnowledge] =
         await Promise.all([
           this.provider
             .read<SessionMemory>(makeSessionKey(scope))
@@ -238,6 +253,14 @@ export class DefaultMemoryManager implements MemoryManager {
               // Tool execution records are not query-ranked — always most recent.
             })
             .catch(() => [] as ToolExecutionRecord[]),
+
+          this.provider
+            .list<KnowledgeRecord>(makeLongTermKnowledgeKey(scope), {
+              limit: DEFAULT_KNOWLEDGE_LIMIT,
+              order: "asc",
+              // Knowledge records are re-sorted by relevance below.
+            })
+            .catch(() => [] as KnowledgeRecord[]),
         ]);
 
       // Conversation: when no query hint, provider returned desc; reverse to chronological order.
@@ -263,6 +286,17 @@ export class DefaultMemoryManager implements MemoryManager {
         .filter((f) => !f.decayed)
         .sort((a, b) => b.importance * b.confidence - a.importance * a.confidence);
 
+      // Knowledge records: exclude expired; sort by importance × confidence descending.
+      const knowledgeNowMs = Date.now();
+      const knowledgeRecords: KnowledgeRecord[] = (rawKnowledge ?? [])
+        .filter(
+          (r) =>
+            r.expiresAt === undefined ||
+            r.expiresAt === null ||
+            r.expiresAt > knowledgeNowMs,
+        )
+        .sort((a, b) => b.importance * b.confidence - a.importance * a.confidence);
+
       // Tool summary: extract from the most recent record, if any.
       const toolSummary: string | null =
         toolRecords && toolRecords.length > 0
@@ -274,6 +308,7 @@ export class DefaultMemoryManager implements MemoryManager {
         this.estimator.estimate(session) +
         this.estimator.estimate(conversation) +
         this.estimator.estimate(userFacts) +
+        this.estimator.estimate(knowledgeRecords) +
         this.estimator.estimate(toolSummary);
       const budgetRemaining = Math.max(
         0,
@@ -285,6 +320,7 @@ export class DefaultMemoryManager implements MemoryManager {
         session: session ?? null,
         conversation,
         userFacts,
+        knowledgeRecords,
         toolSummary,
         budgetUsed,
         budgetRemaining,
@@ -303,6 +339,7 @@ export class DefaultMemoryManager implements MemoryManager {
             user_profile: userFacts.length,
             tool_execution: toolRecords?.length ?? 0,
             request: 0,
+            long_term_knowledge: knowledgeRecords.length,
           },
           timestamp: Date.now(),
         },
@@ -392,6 +429,19 @@ export class DefaultMemoryManager implements MemoryManager {
           }),
         );
       }
+    }
+
+    // -- Long-term knowledge (upsert into map keyed by record.key) ----------
+    if (updates.knowledgeRecords && updates.knowledgeRecords.length > 0) {
+      const key = makeLongTermKnowledgeKey(scope);
+      for (const record of updates.knowledgeRecords) {
+        writes.push(
+          this.provider.upsert(key, record.key, record).catch(() => {
+            // best-effort
+          }),
+        );
+      }
+      tiersWritten.push("long_term_knowledge");
     }
 
     // Fire all writes concurrently; individual catch handlers above absorb failures.

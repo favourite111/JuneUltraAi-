@@ -6,10 +6,21 @@
  *
  * This provider maps the abstract StorageProvider interface to the physical
  * schema defined in lib/schema.ts:
- *   - session      → (not yet implemented in schema, currently in-memory fallback)
- *   - conversation → conversations table
- *   - user_profile → user_facts table
- *   - tool_execution → (not yet implemented in schema, currently in-memory fallback)
+ *   - session            → (not yet in schema; in-memory fallback)
+ *   - conversation       → conversations table
+ *   - user_profile       → user_facts table
+ *   - tool_execution     → (not yet in schema; in-memory fallback)
+ *   - long_term_knowledge → long_term_knowledge table (Milestone 7)
+ *
+ * Schema for long_term_knowledge table (run once per database):
+ *   CREATE TABLE IF NOT EXISTS long_term_knowledge (
+ *     bot_id       TEXT        NOT NULL,
+ *     user_id      TEXT        NOT NULL,
+ *     record_key   TEXT        NOT NULL,
+ *     record_value JSONB       NOT NULL,
+ *     updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+ *     PRIMARY KEY (bot_id, user_id, record_key)
+ *   );
  */
 
 import { getSql } from "../../db.js";
@@ -104,6 +115,28 @@ export class PostgresStorageProvider implements StorageProvider {
       return facts.slice(0, options.limit) as T[];
     }
 
+    if (key.tier === "long_term_knowledge") {
+      const rows = await this.sql`
+        SELECT record_key, record_value, updated_at
+        FROM long_term_knowledge
+        WHERE bot_id = ${key.botId} AND user_id = ${key.userId}
+        ORDER BY updated_at ASC
+        LIMIT ${options.limit ?? 200}
+      `;
+
+      const records = rows.map(row => {
+        const v = typeof row.record_value === "string"
+          ? JSON.parse(row.record_value)
+          : row.record_value;
+        return { ...v, key: row.record_key };
+      });
+
+      if (options.order === "desc") {
+        records.reverse();
+      }
+      return records as T[];
+    }
+
     return [];
   }
 
@@ -152,6 +185,16 @@ export class PostgresStorageProvider implements StorageProvider {
       `;
     }
 
+    if (key.tier === "long_term_knowledge") {
+      const recordValue = JSON.stringify(value);
+      await this.sql`
+        INSERT INTO long_term_knowledge (bot_id, user_id, record_key, record_value, updated_at)
+        VALUES (${key.botId}, ${key.userId}, ${entryKey}, ${recordValue}::jsonb, NOW())
+        ON CONFLICT (bot_id, user_id, record_key)
+        DO UPDATE SET record_value = ${recordValue}::jsonb, updated_at = NOW()
+      `;
+    }
+
     const now = new Date();
     return {
       revision: 1,
@@ -167,12 +210,15 @@ export class PostgresStorageProvider implements StorageProvider {
         await this.sql`DELETE FROM conversations WHERE bot_id = ${sk.botId} AND user_id = ${sk.userId}`;
       } else if (sk.tier === "user_profile") {
         await this.sql`DELETE FROM user_facts WHERE bot_id = ${sk.botId} AND user_id = ${sk.userId}`;
+      } else if (sk.tier === "long_term_knowledge") {
+        await this.sql`DELETE FROM long_term_knowledge WHERE bot_id = ${sk.botId} AND user_id = ${sk.userId}`;
       }
     } else {
       const sp = key as ScopePrefix;
       await Promise.all([
         this.sql`DELETE FROM conversations WHERE bot_id = ${sp.botId} AND user_id = ${sp.userId}`,
-        this.sql`DELETE FROM user_facts WHERE bot_id = ${sp.botId} AND user_id = ${sp.userId}`
+        this.sql`DELETE FROM user_facts WHERE bot_id = ${sp.botId} AND user_id = ${sp.userId}`,
+        this.sql`DELETE FROM long_term_knowledge WHERE bot_id = ${sp.botId} AND user_id = ${sp.userId}`,
       ]);
     }
   }

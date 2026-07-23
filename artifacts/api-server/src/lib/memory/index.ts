@@ -18,6 +18,12 @@ export type {
   ForgetMetricsSnapshot,
   MemoryMetricsSnapshot,
 } from "./memory-metrics-collector.js";
+export { KnowledgeManager } from "./knowledge-manager.js";
+export type {
+  KnowledgeLoadOptions,
+  MergeResult,
+  KnowledgeManagerOptions,
+} from "./knowledge-manager.js";
 export { CharacterTokenEstimator } from "./token-estimator.js";
 export type { TokenEstimator } from "./token-estimator.js";
 export { ExtractiveConversationSummarizer } from "./conversation-summarizer.js";
