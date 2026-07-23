@@ -83,7 +83,7 @@ function makeFakeProvider(): StorageProvider {
 
 const SESSION: SessionMemory = {
   sessionId: "s1",
-  lastActivityAt: 1_000_000,
+  lastActivityAt: Date.now(),
   userMood: "neutral",
   conversationStage: "intro",
   personalityTemp: "warm",
@@ -335,7 +335,7 @@ describe("TokenEstimator injection into DefaultMemoryManager", () => {
 
   it("custom estimator return value influences budgetUsed", async () => {
     const provider = makeFakeProvider();
-    vi.mocked(provider.read).mockResolvedValueOnce(SESSION);
+    vi.mocked(provider.read).mockResolvedValueOnce({ ...SESSION, lastActivityAt: Date.now() });
 
     // Estimator always returns a fixed number per call
     const FIXED_PER_CALL = 100;

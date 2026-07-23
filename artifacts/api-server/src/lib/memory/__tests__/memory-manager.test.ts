@@ -85,7 +85,7 @@ const FAKE_WRITE_RESULT: WriteResult = {
 
 const SESSION: SessionMemory = {
   sessionId: "s1",
-  lastActivityAt: 1_000_000,
+  lastActivityAt: Date.now(),
   userMood: "neutral",
   conversationStage: "intro",
   personalityTemp: "warm",
@@ -221,11 +221,12 @@ describe("DefaultMemoryManager.load()", () => {
   });
 
   it("populates session when provider.read returns a SessionMemory", async () => {
-    vi.mocked(provider.read).mockResolvedValueOnce(SESSION);
+    const freshSession = { ...SESSION, lastActivityAt: Date.now() };
+    vi.mocked(provider.read).mockResolvedValueOnce(freshSession);
 
     const ctx = await manager.load(SCOPE, BUDGET);
 
-    expect(ctx.session).toEqual(SESSION);
+    expect(ctx.session).toEqual(freshSession);
   });
 
   it("reads session with tier 'session' and sessionId qualifier", async () => {

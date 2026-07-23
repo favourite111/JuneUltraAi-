@@ -20,6 +20,7 @@ import { memoryManager } from "../lib/memory-singletons.js";
 import { extractKnowledge } from "../lib/memory/knowledge-extractor.js";
 import { scoreFact } from "../lib/memory/confidence-scorer.js";
 import { isSaneFact } from "../lib/memory/memory-sanity-check.js";
+import { analyzeSession } from "../lib/memory/session-analyzer.js";
 import {
   extractFacts,
   deleteAllFacts,
@@ -668,6 +669,20 @@ function formatUserFactsForPrompt(facts: readonly MemoryUserFact[]): string {
 function renderMemoryContext(ctx: MemoryContext): string {
   const parts: string[] = [];
 
+  // Milestone 15 — Session Intelligence
+  if (ctx.session) {
+    const s = ctx.session;
+    const sessionParts: string[] = [];
+    if (s.userMood) sessionParts.push(`Mood: ${s.userMood}`);
+    if ((s as any).currentTask) sessionParts.push(`Current Task: ${(s as any).currentTask}`);
+    if (s.activeTopics && s.activeTopics.length > 0) sessionParts.push(`Active Topics: ${s.activeTopics.join(", ")}`);
+    if (s.conversationStage) sessionParts.push(`Stage: ${s.conversationStage}`);
+
+    if (sessionParts.length > 0) {
+      parts.push("SESSION CONTEXT:\n" + sessionParts.join("\n"));
+    }
+  }
+
   if (ctx.knowledgeRecords.length > 0) {
     const lines = ctx.knowledgeRecords
       .slice(0, 3)
@@ -1151,21 +1166,24 @@ async function handleChat(req: Request, res: Response): Promise<void> {
     void savePendingTopic(botId, userId, topicText, importance, topicKey);
   }
 
-  // Phase 3C — M13: record session state in proper SessionMemory shape.
-  // Conversation history is written exclusively by appendMessages() above
-  // to keep the JSONB column in a single consistent Message format.
+  // Milestone 15 — Session Intelligence
+  const sessionInference = analyzeSession(prompt, history);
+  
   void memoryManager.record(memoryScope, {
     session: {
       sessionId:          requestId,
       lastActivityAt:     now * 1000,
-      userMood:           state.userMood,
-      conversationStage:  state.conversationStage,
-      personalityTemp:    state.personalityTemp,
+      userMood:           sessionInference.userMood ?? state.userMood,
+      conversationStage:  sessionInference.conversationStage ?? state.conversationStage,
+      // temporaryToneAdjustment renamed from personalityTemp (M15)
+      personalityTemp:    sessionInference.temporaryToneAdjustment ?? state.personalityTemp,
       questionChainDepth: state.questionChainDepth,
-      activeTopics:       state.topics,
+      activeTopics:       sessionInference.activeTopics ?? state.topics,
       recentBotPhrases:   state.recentBotPhrases,
       greetingDone:       state.greetingDone,
-    },
+      // currentTask added in M15
+      ...((sessionInference.currentTask) ? { currentTask: sessionInference.currentTask } : {}),
+    } as any,
   });
 
   res.json({

@@ -6,6 +6,7 @@
 
 import { type ScoredFact } from "./confidence-scorer.js";
 import { type UserFact } from "./types.js";
+import { isSensitive } from "./sensitive-data-filter.js";
 
 /**
  * Impossible or highly suspicious values for specific keys.
@@ -38,7 +39,12 @@ export function isSaneFact(fact: ScoredFact, existingFacts: Record<string, strin
     ? Object.fromEntries(existingFacts.map(f => [f.key, f.value]))
     : existingFacts;
 
-  // 1. Check for impossible values
+  // 1. Check for sensitive data (Milestone 15)
+  if (isSensitive(fact.key, fact.value, fact.rawSource)) {
+    return false;
+  }
+
+  // 2. Check for impossible values
   const impossiblePatterns = IMPOSSIBLE_VALUES[fact.key];
   if (impossiblePatterns && impossiblePatterns.some(p => p.test(fact.value))) {
     return false;

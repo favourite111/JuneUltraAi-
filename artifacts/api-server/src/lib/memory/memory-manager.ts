@@ -239,7 +239,7 @@ export class DefaultMemoryManager implements MemoryManager {
       );
 
       // Fetch all tiers concurrently; individual failures default to null / [].
-      const [session, conversationDesc, userFactValues, toolRecords, rawKnowledge] =
+      const [rawSession, conversationDesc, userFactValues, toolRecords, rawKnowledge] =
         await Promise.all([
           this.provider
             .read<SessionMemory>(makeSessionKey(scope))
@@ -321,6 +321,12 @@ export class DefaultMemoryManager implements MemoryManager {
           ? buildToolSummary(toolRecords[0]!)
           : null;
 
+      // Milestone 15 — Session Expiration (24h sliding TTL)
+      const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
+      const session = rawSession && (loadedAt - rawSession.lastActivityAt < SESSION_TTL_MS)
+        ? rawSession
+        : null;
+
       // Budget accounting — delegated to the injected TokenEstimator.
       const budgetUsed =
         this.estimator.estimate(session) +
@@ -335,7 +341,7 @@ export class DefaultMemoryManager implements MemoryManager {
 
       const context: MemoryContext = {
         version: MEMORY_CONTEXT_VERSION,
-        session: session ?? null,
+        session,
         conversation,
         userFacts,
         knowledgeRecords,
@@ -406,13 +412,18 @@ export class DefaultMemoryManager implements MemoryManager {
       writes.push(
         (async () => {
           const sessionKey = makeSessionKey(scope);
+          // Milestone 15 — 24h Sliding TTL: Always update lastActivityAt on record
+          const sessionUpdate = {
+            ...updates.session,
+            lastActivityAt: Date.now(),
+          };
           try {
-            await this.provider.write(sessionKey, updates.session!);
+            await this.provider.write(sessionKey, sessionUpdate);
             tiersWritten.push("session");
           } catch {
             // First failure — retry once silently.
             try {
-              await this.provider.write(sessionKey, updates.session!);
+              await this.provider.write(sessionKey, sessionUpdate);
               tiersWritten.push("session");
             } catch (secondErr) {
               // Second failure — observable event + record_failed; do not throw.
