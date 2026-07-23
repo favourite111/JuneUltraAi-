@@ -146,6 +146,136 @@ describe("KnowledgeManager provider orchestration", () => {
     ]);
   });
 
+  it("tracks pending vectors and repairs them without changing authoritative storage", async () => {
+    const storage = new InMemoryStorageProvider();
+    const vectors = new VectorStorageProvider();
+    let shouldFail = true;
+    const manager = new KnowledgeManager(storage, {
+      embeddingProvider: {
+        dimensions: 2,
+        providerId: "test-provider",
+        modelId: "test-model",
+        embed: vi.fn().mockImplementation(async () => {
+          if (shouldFail) throw new Error("temporary embedding failure");
+          return [1, 0];
+        }),
+      },
+      vectorStorageProvider: vectors,
+    });
+
+    await expect(manager.upsert(SCOPE, makeRecord("pending", "authoritative value")))
+      .rejects.toThrow("temporary embedding failure");
+
+    const dryRun = await manager.reconcile({ scope: SCOPE, dryRun: true });
+    expect(dryRun.pending).toEqual(["pending"]);
+    expect(dryRun.repaired).toEqual([]);
+    expect(vectors.listIndexSize(SCOPE)).toBe(0);
+
+    shouldFail = false;
+    const repaired = await manager.reconcile({ scope: SCOPE, batchSize: 1 });
+    expect(repaired.repaired).toEqual(["pending"]);
+    expect(await manager.load(SCOPE)).toEqual([
+      expect.objectContaining({ key: "pending", value: "authoritative value" }),
+    ]);
+    expect(vectors.listIndexSize(SCOPE)).toBe(1);
+  });
+
+  it("reports and repairs missing, stale, invalid, and orphaned vectors", async () => {
+    const storage = new InMemoryStorageProvider();
+    const vectors = new VectorStorageProvider();
+    const manager = new KnowledgeManager(storage, {
+      embeddingProvider: new HashingEmbeddingProvider(2),
+      vectorStorageProvider: vectors,
+    });
+    const storageKey = {
+      tier: "long_term_knowledge" as const,
+      tenantId: SCOPE.tenantId,
+      botId: SCOPE.botId,
+      userId: SCOPE.userId,
+    };
+
+    await storage.upsert(storageKey, "missing", makeRecord("missing", "missing value"));
+    await manager.upsert(SCOPE, makeRecord("stale", "original value"));
+    await storage.upsert(storageKey, "stale", makeRecord("stale", "changed value", {
+      updatedAt: 999_999,
+      version: 2,
+    }));
+    await storage.upsert(storageKey, "invalid", makeRecord("invalid", "invalid vector"));
+    await vectors.upsertVector(SCOPE, "orphan", [1, 0], {
+      indexSchemaVersion: 1,
+      providerId: "hashing",
+      modelId: "feature-hashing",
+      dimensions: 2,
+      lifecycleState: "indexed",
+    });
+    await vectors.upsertVector(SCOPE, "invalid", [1, 0], {
+      indexSchemaVersion: 99,
+      providerId: "old-provider",
+      modelId: "old-model",
+      dimensions: 2,
+      lifecycleState: "indexed",
+    });
+
+    const dryRun = await manager.reconcile({ scope: SCOPE, dryRun: true });
+    expect(dryRun.missing).toEqual(["missing"]);
+    expect(dryRun.stale).toEqual(["stale"]);
+    expect(dryRun.invalid).toEqual(["invalid"]);
+    expect(dryRun.orphaned).toEqual(["orphan"]);
+    expect(dryRun.repaired).toEqual([]);
+    expect(dryRun.deleted).toEqual([]);
+    expect(vectors.listIndexSize(SCOPE)).toBe(3);
+
+    const repaired = await manager.reconcile({ scope: SCOPE, batchSize: 10 });
+    expect(repaired.repaired).toEqual(["missing", "stale", "invalid"]);
+    expect(repaired.deleted).toEqual(["orphan"]);
+    expect(vectors.listIndexSize(SCOPE)).toBe(3);
+    expect(await manager.load(SCOPE)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ key: "missing", value: "missing value" }),
+        expect.objectContaining({ key: "stale", value: "changed value", version: 2 }),
+      ]),
+    );
+  });
+
+  it("stores canonical lifecycle metadata and ignores timestamps in fingerprints", async () => {
+    const storage = new InMemoryStorageProvider();
+    const vectors = new VectorStorageProvider();
+    const manager = new KnowledgeManager(storage, {
+      nowFn: () => 123_000,
+      embeddingProvider: new HashingEmbeddingProvider(2),
+      vectorStorageProvider: vectors,
+    });
+    const record = makeRecord("metadata", "stable content", {
+      createdAt: 1,
+      updatedAt: 2,
+    });
+
+    await manager.upsert(SCOPE, record);
+    const indexed = (await vectors.listVectors(SCOPE))[0]!;
+    expect(indexed.metadata).toEqual(expect.objectContaining({
+      indexSchemaVersion: 1,
+      providerId: "hashing",
+      modelId: "feature-hashing",
+      dimensions: 2,
+      lifecycleState: "indexed",
+      indexedAt: 123_000,
+    }));
+    expect(indexed.metadata.contentFingerprint).toMatch(/^[a-f0-9]{64}$/);
+
+    await storage.upsert(
+      {
+        tier: "long_term_knowledge",
+        tenantId: SCOPE.tenantId,
+        botId: SCOPE.botId,
+        userId: SCOPE.userId,
+      },
+      "metadata",
+      makeRecord("metadata", "stable content", { createdAt: 90, updatedAt: 91 }),
+    );
+    const report = await manager.reconcile({ scope: SCOPE, dryRun: true });
+    expect(report.stale).toEqual([]);
+  });
+
   it("rejects an embedding whose dimensions do not match the provider contract", async () => {
     const storage = new InMemoryStorageProvider();
     const manager = new KnowledgeManager(storage, {

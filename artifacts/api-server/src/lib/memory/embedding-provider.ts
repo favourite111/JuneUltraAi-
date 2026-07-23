@@ -45,6 +45,10 @@ export const EMBEDDING_DIMENSIONS = 128;
 export interface EmbeddingProvider {
   /** Fixed number of dimensions in every vector this provider produces. */
   readonly dimensions: number;
+  /** Stable adapter identity used for derived-index compatibility checks. */
+  readonly providerId?: string;
+  /** Stable model identity used for derived-index compatibility checks. */
+  readonly modelId?: string;
 
   embed(text: string): Promise<readonly number[]>;
 }
@@ -125,6 +129,8 @@ export function cosineSimilarity(a: readonly number[], b: readonly number[]): nu
  */
 export class HashingEmbeddingProvider implements EmbeddingProvider {
   readonly dimensions: number;
+  readonly providerId = "hashing";
+  readonly modelId = "feature-hashing";
 
   constructor(dimensions: number = EMBEDDING_DIMENSIONS) {
     if (!Number.isInteger(dimensions) || dimensions < 1) {

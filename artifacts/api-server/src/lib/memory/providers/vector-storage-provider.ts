@@ -13,6 +13,12 @@ import type { MemoryScope } from "../types.js";
 
 export type VectorMetadata = Readonly<Record<string, unknown>>;
 
+export interface VectorIndexEntry {
+  readonly sourceId: string;
+  readonly dimensions: number;
+  readonly metadata: VectorMetadata;
+}
+
 export interface VectorSearchOptions {
   readonly limit: number;
   readonly similarityThreshold?: number;
@@ -47,6 +53,12 @@ export interface VectorStorageProviderContract {
   deleteVector(scope: MemoryScope, sourceId: string): Promise<void>;
 
   deleteScope(scope: MemoryScope): Promise<void>;
+
+  /**
+   * Optional maintenance capability. Retrieval does not depend on it.
+   * Implementations that support reconciliation return only entries in scope.
+   */
+  listVectors?(scope: MemoryScope): Promise<readonly VectorIndexEntry[]>;
 }
 
 interface StoredVector {
@@ -159,6 +171,16 @@ export class VectorStorageProvider implements VectorStorageProviderContract {
     const scopeKey = encodeScope(scope);
     this.vectors.delete(scopeKey);
     this.dimensionsByScope.delete(scopeKey);
+  }
+
+  async listVectors(scope: MemoryScope): Promise<readonly VectorIndexEntry[]> {
+    return [...(this.vectors.get(encodeScope(scope))?.values() ?? [])].map(
+      ({ sourceId, vector, metadata }) => ({
+        sourceId,
+        dimensions: vector.length,
+        metadata,
+      }),
+    );
   }
 
   listIndexSize(scope: MemoryScope): number {

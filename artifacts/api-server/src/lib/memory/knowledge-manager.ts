@@ -1,5 +1,5 @@
 /**
- * Phase 3C — Milestone 7: Long-Term Knowledge Foundation
+ * Phase 3C — Knowledge lifecycle and retrieval orchestration
  *
  * KnowledgeManager owns the long-term knowledge lifecycle and orchestrates the
  * injected embedding and vector-storage abstractions. It is not intelligent:
@@ -15,10 +15,11 @@
  *     incoming.version > stored.version.
  *   - remove() uses the read-filter-delete-reappend pattern established in M5.
  *   - load() filters expired records by default (records where expiresAt ≤ nowMs).
- *   - Results are sorted by importance × confidence descending (highest relevance
- *     first) — ready for future token-budget eviction.
+ *   - Retrieval ordering is owned by KnowledgeManager; vector indexes remain
+ *     derived and disposable.
  */
 
+import { createHash } from "node:crypto";
 import type {
   KnowledgeCategory,
   KnowledgeRecord,
@@ -29,6 +30,7 @@ import type {
 import type { EmbeddingProvider } from "./embedding-provider.js";
 import { tokenise } from "./relevance-scorer.js";
 import type {
+  VectorIndexEntry,
   VectorSearchOptions,
   VectorStorageProviderContract,
 } from "./providers/vector-storage-provider.js";
@@ -94,11 +96,39 @@ export interface KnowledgeRelevantOptions extends KnowledgeLoadOptions {
   readonly similarityThreshold?: number;
 }
 
+export type KnowledgeVectorDrift =
+  | "missing-vector"
+  | "pending-vector"
+  | "stale-vector"
+  | "orphaned-vector"
+  | "invalid-vector";
+
+export interface KnowledgeIndexReport {
+  readonly scope: MemoryScope;
+  readonly missing: readonly string[];
+  readonly pending: readonly string[];
+  readonly stale: readonly string[];
+  readonly orphaned: readonly string[];
+  readonly invalid: readonly string[];
+  readonly repaired: readonly string[];
+  readonly deleted: readonly string[];
+  readonly dryRun: boolean;
+}
+
+export interface KnowledgeReconcileOptions {
+  readonly scope: MemoryScope;
+  readonly batchSize?: number;
+  readonly dryRun?: boolean;
+}
+
+export const KNOWLEDGE_INDEX_SCHEMA_VERSION = 1;
+
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
 const DEFAULT_LOAD_LIMIT = 200;
+const DEFAULT_RECONCILE_BATCH_SIZE = 50;
 
 // ---------------------------------------------------------------------------
 // KnowledgeManager
@@ -116,6 +146,8 @@ export class KnowledgeManager {
   private readonly nowFn: () => number;
   private readonly embeddingProvider?: EmbeddingProvider;
   private readonly vectorStorageProvider?: VectorStorageProviderContract;
+  // TODO(Milestone 12): persist pending-vector state for cross-process repair.
+  private readonly pendingVectors = new Map<string, KnowledgeVectorDrift>();
 
   constructor(
     private readonly provider: StorageProvider,
@@ -142,20 +174,102 @@ export class KnowledgeManager {
     await this.provider.upsert(this._key(scope), record.key, record);
 
     if (this.embeddingProvider && this.vectorStorageProvider) {
-      const text = this.embeddingText(record);
-      const vector = await this.embeddingProvider.embed(text);
-      this.validateDimensions(vector);
-      await this.vectorStorageProvider.upsertVector(
-        scope,
-        record.key,
-        vector,
-        {
-          key: record.key,
-          version: record.version,
-          contentChecksum: this.contentChecksum(text),
-        },
-      );
+      try {
+        await this.indexRecord(scope, record);
+        this.pendingVectors.delete(scopedRecordKey(scope, record.key));
+      } catch (error) {
+        this.pendingVectors.set(
+          scopedRecordKey(scope, record.key),
+          "pending-vector",
+        );
+        throw error;
+      }
     }
+  }
+
+  /**
+   * Reports and optionally repairs drift in the derived vector index.
+   *
+   * Repair only changes derived vectors: authoritative knowledge is never
+   * overwritten or deleted by this operation.
+   */
+  async reconcile(options: KnowledgeReconcileOptions): Promise<KnowledgeIndexReport> {
+    const { scope, dryRun = false } = options;
+    const batchSize = normalizeBatchSize(options.batchSize);
+    const vectorProvider = this.vectorStorageProvider;
+    if (!this.embeddingProvider || !vectorProvider) {
+      throw new Error("Knowledge index reconciliation requires embedding and vector providers");
+    }
+    if (!vectorProvider.listVectors) {
+      throw new Error("Vector provider does not support index inspection");
+    }
+
+    const [records, vectors] = await Promise.all([
+      this.provider.list<KnowledgeRecord>(this._key(scope), {
+        limit: DEFAULT_LOAD_LIMIT,
+        order: "asc",
+      }),
+      vectorProvider.listVectors(scope),
+    ]);
+    const recordsByKey = new Map(records.map((record) => [record.key, record]));
+    const vectorsByKey = new Map(vectors.map((vector) => [vector.sourceId, vector]));
+    const missing: string[] = [];
+    const pending: string[] = [];
+    const stale: string[] = [];
+    const invalid: string[] = [];
+    const orphaned = vectors
+      .filter((vector) => !recordsByKey.has(vector.sourceId))
+      .map((vector) => vector.sourceId);
+
+    for (const record of records) {
+      const identity = scopedRecordKey(scope, record.key);
+      const vector = vectorsByKey.get(record.key);
+      if (this.pendingVectors.has(identity)) {
+        pending.push(record.key);
+      } else if (!vector) {
+        missing.push(record.key);
+      } else if (this.isInvalidVector(vector)) {
+        invalid.push(record.key);
+      } else if (!this.isCurrentVector(record, vector)) {
+        stale.push(record.key);
+      }
+    }
+
+    const repairCandidates = [...missing, ...pending, ...stale, ...invalid]
+      .slice(0, batchSize);
+    const repaired: string[] = [];
+    const deleted: string[] = [];
+
+    if (!dryRun) {
+      for (const key of repairCandidates) {
+        const record = recordsByKey.get(key);
+        if (!record) continue;
+        try {
+          await this.indexRecord(scope, record);
+          this.pendingVectors.delete(scopedRecordKey(scope, key));
+          repaired.push(key);
+        } catch {
+          this.pendingVectors.set(scopedRecordKey(scope, key), "pending-vector");
+        }
+      }
+      for (const key of orphaned.slice(0, Math.max(0, batchSize - repaired.length))) {
+        await vectorProvider.deleteVector(scope, key);
+        this.pendingVectors.delete(scopedRecordKey(scope, key));
+        deleted.push(key);
+      }
+    }
+
+    return {
+      scope,
+      missing,
+      pending,
+      stale,
+      orphaned,
+      invalid,
+      repaired,
+      deleted,
+      dryRun,
+    };
   }
 
   // ---------------------------------------------------------------------------
@@ -296,6 +410,7 @@ export class KnowledgeManager {
       await this.provider.upsert(storageKey, record.key, record);
     }
     await this.vectorStorageProvider?.deleteVector(scope, key);
+    this.pendingVectors.delete(scopedRecordKey(scope, key));
 
     return true;
   }
@@ -311,6 +426,11 @@ export class KnowledgeManager {
   async removeAll(scope: MemoryScope): Promise<void> {
     await this.provider.delete(this._key(scope));
     await this.vectorStorageProvider?.deleteScope(scope);
+    for (const identity of this.pendingVectors.keys()) {
+      if (identity.startsWith(`${scope.tenantId}\u0000${scope.botId}\u0000${scope.userId}\u0000`)) {
+        this.pendingVectors.delete(identity);
+      }
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -485,6 +605,50 @@ export class KnowledgeManager {
     return `${record.key} ${record.value}`;
   }
 
+  private async indexRecord(scope: MemoryScope, record: KnowledgeRecord): Promise<void> {
+    if (!this.embeddingProvider || !this.vectorStorageProvider) return;
+    const text = this.embeddingText(record);
+    const vector = await this.embeddingProvider.embed(text);
+    this.validateDimensions(vector);
+    await this.vectorStorageProvider.upsertVector(scope, record.key, vector, {
+      key: record.key,
+      version: record.version,
+      contentFingerprint: this.contentFingerprint(record),
+      indexSchemaVersion: KNOWLEDGE_INDEX_SCHEMA_VERSION,
+      providerId: this.embeddingProvider.providerId ?? "unspecified",
+      modelId: this.embeddingProvider.modelId ?? "unspecified",
+      dimensions: this.embeddingProvider.dimensions,
+      lifecycleState: "indexed",
+      indexedAt: this.nowFn(),
+    });
+  }
+
+  private isInvalidVector(vector: VectorIndexEntry): boolean {
+    const metadata = vector.metadata;
+    return (
+      vector.dimensions !== this.embeddingProvider?.dimensions ||
+      metadata.indexSchemaVersion !== KNOWLEDGE_INDEX_SCHEMA_VERSION ||
+      metadata.providerId !== (this.embeddingProvider?.providerId ?? "unspecified") ||
+      metadata.modelId !== (this.embeddingProvider?.modelId ?? "unspecified") ||
+      metadata.dimensions !== this.embeddingProvider?.dimensions
+    );
+  }
+
+  private isCurrentVector(
+    record: KnowledgeRecord,
+    vector: VectorIndexEntry,
+  ): boolean {
+    return (
+      vector.metadata.contentFingerprint === this.contentFingerprint(record) &&
+      vector.metadata.lifecycleState === "indexed"
+    );
+  }
+
+  private contentFingerprint(record: KnowledgeRecord): string {
+    const canonical = canonicalizeKnowledgeRecord(record);
+    return createHash("sha256").update(JSON.stringify(canonical)).digest("hex");
+  }
+
   private validateDimensions(vector: readonly number[]): void {
     if (
       this.embeddingProvider &&
@@ -494,15 +658,6 @@ export class KnowledgeManager {
         `Embedding dimension mismatch: expected ${this.embeddingProvider.dimensions}, received ${vector.length}`,
       );
     }
-  }
-
-  private contentChecksum(text: string): string {
-    let hash = 2166136261;
-    for (let index = 0; index < text.length; index += 1) {
-      hash ^= text.charCodeAt(index);
-      hash = Math.imul(hash, 16777619);
-    }
-    return (hash >>> 0).toString(16).padStart(8, "0");
   }
 }
 
@@ -517,4 +672,27 @@ function scopedRecordKey(scope: MemoryScope, recordKey: string): string {
     scope.userId,
     recordKey,
   ].join("\u0000");
+}
+
+function normalizeBatchSize(value: number | undefined): number {
+  if (value === undefined) return DEFAULT_RECONCILE_BATCH_SIZE;
+  if (!Number.isInteger(value) || value < 1) {
+    throw new RangeError(`batchSize must be a positive integer; got ${value}`);
+  }
+  return value;
+}
+
+function canonicalizeKnowledgeRecord(
+  record: KnowledgeRecord,
+): Record<string, unknown> {
+  return {
+    category: record.category,
+    confidence: record.confidence,
+    importance: record.importance,
+    key: record.key,
+    source: record.source,
+    tags: [...record.tags].sort(),
+    value: record.value,
+    version: record.version,
+  };
 }

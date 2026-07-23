@@ -23,6 +23,9 @@ export {
   type KnowledgeLoadOptions,
   type KnowledgeManagerOptions,
   type KnowledgeRelevantOptions,
+  type KnowledgeIndexReport,
+  type KnowledgeReconcileOptions,
+  type KnowledgeVectorDrift,
   type MergeResult,
 } from "./knowledge-manager.js";
 export { CharacterTokenEstimator } from "./token-estimator.js";
@@ -44,6 +47,7 @@ export { InMemoryStorageProvider } from "./providers/in-memory-storage-provider.
 export {
   VectorStorageProvider,
   type VectorMetadata,
+  type VectorIndexEntry,
   type VectorSearchOptions,
   type VectorSearchResult,
   type VectorStorageProviderContract,
