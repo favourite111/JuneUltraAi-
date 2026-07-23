@@ -1,77 +1,83 @@
 import { createExecutionContext } from "./context.js";
 import { AgentEventBus } from "./event-bus.js";
-import { createToolExecutor } from "./executor.js";
-import { createPlanner } from "./planner.js";
-import { createReflectionEngine } from "./reflection.js";
-import { routeTool, type RoutedTool, ToolRegistry } from "./registry.js";
-import { 
-  type AgentPlan,
-  type EventBus,
-  type ExecutionContext,
-  type ExecutionContextDependencies,
-  type ExecutionContextInput,
-  type ReflectionDecision,
-  type ReflectionDecisionType,
-  type Tool,
-  type ToolError,
-  type ToolResult,
-  type ModelProvider, 
-  type PromptManager, 
-  type LLMDecision, 
-  type ModelResponse,
-  type HybridConfig,
-  DEFAULT_CONFIDENCE_THRESHOLDS,
+import { routeTool, type RoutedTool } from "./registry.js";
+import { createExecutionOrchestrator } from "../orchestrator/execution-orchestrator.js";
+import { DEFAULT_CONFIDENCE_THRESHOLDS } from "./types.js";
+import type {
+  AgentPlan,
+  EventBus,
+  ExecutionContext,
+  ExecutionContextDependencies,
+  ExecutionContextInput,
+  HybridConfig,
+  ModelProvider,
+  PromptManager,
+  Tool,
+  ToolResult,
+  ToolError,
 } from "./types.js";
+import type { ReasoningResult } from "../reasoner/reasoner-types.js";
+
+// ---------------------------------------------------------------------------
+// M19 — Runtime (thin adapter)
+//
+// Before M19: Runtime owned tool selection, execution, retry, and formatting.
+// After  M19: Runtime creates the ExecutionContext, builds the OrchestratorInput,
+//             delegates all execution to ExecutionOrchestrator, and translates
+//             the immutable ExecutionResult back to AgentRuntimeResponse.
+//
+// The AgentRuntimeResponse contract is unchanged — chat.ts continues to work
+// with CompletedRuntimeResponse | FailedRuntimeResponse | NoCapabilityRuntimeResponse.
+// ---------------------------------------------------------------------------
 
 export type CapabilityRouter = (prompt: string) => RoutedTool | null;
-import { DecisionValidator, normalizeError, CircuitBreaker, MetricsCollector } from "./resilience.js";
 
 export interface AgentRuntimeDependencies extends ExecutionContextDependencies {
-  /** A request-isolated or explicitly shared lifecycle bus. */
-  readonly eventBus?: EventBus;
-  /** Injectable deterministic router used by tests and alternative composition roots. */
-  readonly router?: CapabilityRouter;
-  readonly modelProvider?: ModelProvider;
-  readonly promptManager?: PromptManager;
+  readonly eventBus?:             EventBus;
+  readonly router?:               CapabilityRouter;
+  readonly modelProvider?:        ModelProvider;
+  readonly promptManager?:        PromptManager;
   readonly confidenceThresholds?: typeof DEFAULT_CONFIDENCE_THRESHOLDS;
-  readonly hybridConfig?: HybridConfig;
-  /** Phase 3B — Contextual Memory Architecture. */
-  readonly memoryManager?: import("../memory/types.js").MemoryManager;
+  readonly hybridConfig?:         HybridConfig;
+  readonly memoryManager?:        import("../memory/types.js").MemoryManager;
 }
 
 export interface AgentRuntimeRequest extends ExecutionContextInput {
   readonly prompt: string;
-  /**
-   * Optional M17 planning decision. When present, the planner owns the
-   * tool/no-tool gate; the legacy router still resolves the concrete tool.
-   */
+  /** M17 planning decision — when present the planner is authoritative. */
   readonly planningDecision?: {
-    readonly needsTool: boolean;
-    readonly toolName?: string;
-    readonly toolArgs?: unknown;
+    readonly needsTool:  boolean;
+    readonly toolName?:  string;
+    readonly toolArgs?:  unknown;
   };
+  /** M18 reasoning result — advisory, passed through to the Orchestrator. */
+  readonly reasoningResult?: ReasoningResult;
 }
 
+// ---------------------------------------------------------------------------
+// Response types (unchanged from pre-M19 — backward-compatible contract)
+// ---------------------------------------------------------------------------
+
 export interface CompletedRuntimeResponse {
-  readonly status: "completed";
+  readonly status:  "completed";
   readonly context: ExecutionContext;
-  readonly plan: AgentPlan;
-  readonly tool: Tool;
-  readonly result: ToolResult;
+  readonly plan:    AgentPlan;
+  readonly tool:    Tool;
+  readonly result:  ToolResult;
 }
 
 export interface FailedRuntimeResponse {
-  readonly status: "failed";
+  readonly status:  "failed";
   readonly context: ExecutionContext;
-  readonly plan: AgentPlan;
-  readonly tool: Tool;
-  readonly error: ToolError;
+  readonly plan:    AgentPlan;
+  readonly tool:    Tool;
+  readonly error:   ToolError;
 }
 
 export interface NoCapabilityRuntimeResponse {
-  readonly status: "no_capability";
+  readonly status:  "no_capability";
   readonly context: ExecutionContext;
-  readonly plan: AgentPlan;
+  readonly plan:    AgentPlan;
 }
 
 export type AgentRuntimeResponse =
@@ -79,255 +85,101 @@ export type AgentRuntimeResponse =
   | FailedRuntimeResponse
   | NoCapabilityRuntimeResponse;
 
-function reflectionFailure(decision: ReflectionDecision): ToolError {
-  return {
-    code: "REFLECTION_FAILED",
-    message: "The deterministic reflection policy rejected the tool result.",
-    details: { reasoning: decision.reasoning },
-    isRetryable: false,
-  };
-}
+// ---------------------------------------------------------------------------
+// Factory
+// ---------------------------------------------------------------------------
 
-/**
- * Composes the Phase 3A deterministic runtime:
- *
- * User Request → ExecutionContext → Capability Router → Task Planner → Tool
- * Executor → Reflection Engine → Final Response.
- *
- * This function owns no clock, random source, LLM, or autonomous re-planning
- * loop. All observable values are produced from injected dependencies, and a
- * given request plus dependency stream produces the same control flow.
- */
 export function createDeterministicAgentRuntime(
   dependencies: AgentRuntimeDependencies,
 ) {
-  const configuredModelProvider = dependencies.modelProvider;
-  const configuredPromptManager = dependencies.promptManager;
-  const confidenceThresholds = dependencies.confidenceThresholds ?? DEFAULT_CONFIDENCE_THRESHOLDS;
   const configuredEventBus = dependencies.eventBus ?? new AgentEventBus();
-  const router = dependencies.router ?? routeTool;
-  
-  const circuitBreaker = dependencies.hybridConfig?.circuitBreaker 
-    ? new CircuitBreaker(dependencies.hybridConfig.circuitBreaker, dependencies.clock)
-    : null;
+
+  // Build the orchestrator once — stateless, shared across requests.
+  const orchestrator = createExecutionOrchestrator({
+    router:               dependencies.router ?? routeTool,
+    modelProvider:        dependencies.modelProvider,
+    promptManager:        dependencies.promptManager,
+    hybridConfig:         dependencies.hybridConfig,
+    confidenceThresholds: dependencies.confidenceThresholds ?? DEFAULT_CONFIDENCE_THRESHOLDS,
+    clock:                dependencies.clock,
+  });
 
   return {
     execute: async (request: AgentRuntimeRequest): Promise<AgentRuntimeResponse> => {
       const eventBus = request.eventBus ?? configuredEventBus;
-      const context = createExecutionContext(
-        { ...request, eventBus },
-        dependencies,
-      );
+      const context  = createExecutionContext({ ...request, eventBus }, dependencies);
 
       eventBus.emit({
-        type: "router.started",
+        type:    "router.started",
         context,
         payload: { prompt: request.prompt, timestamp: context.clock.now() },
       });
 
-      let routed = request.planningDecision?.needsTool === false
-        ? null
-        : request.planningDecision?.toolName
-          ? (() => {
-              const plannedTool = ToolRegistry.getTool(request.planningDecision!.toolName!);
-              return plannedTool
-                ? {
-                    tool: plannedTool,
-                    args: request.planningDecision!.toolArgs ?? {},
-                    confidence: { score: 1, reasoning: ["M17 planner-selected tool"] },
-                  }
-                : null;
-            })()
-          : router(request.prompt);
+      // Derive the planner input from M17 planningDecision + plannerState.
+      const ps = request.plannerState as {
+        intent?:      string;
+        needsMemory?: boolean;
+        needsTool?:   boolean;
+        plan?:        Array<{ step: number; action: string; description: string; toolName?: string }>;
+      } | undefined;
 
-      // If deterministic router has low confidence and hybrid intelligence is enabled, consult the LLM
-      if (
-        request.planningDecision === undefined &&
-        (!routed || routed.confidence.score < confidenceThresholds.routerMinConfidence) &&
-        dependencies.hybridConfig?.enabled
-      ) {
-        if (configuredModelProvider && configuredPromptManager) {
-          context.metrics.record("llm_requests");
+      const result = await orchestrator.execute({
+        prompt: request.prompt,
+        planner: {
+          needsTool:   request.planningDecision?.needsTool   ?? ps?.needsTool   ?? false,
+          toolName:    request.planningDecision?.toolName,
+          toolArgs:    request.planningDecision?.toolArgs,
+          intent:      ps?.intent      ?? "general_answer",
+          needsMemory: ps?.needsMemory ?? false,
+          plan:        ps?.plan        ?? [],
+        },
+        reasoning: request.reasoningResult,
+        context,
+        eventBus,
+      });
 
-          const breakerState = circuitBreaker?.getState(context.clock) ?? "CLOSED";
-          if (breakerState === "OPEN") {
-            context.metrics.record("circuit_breaker_skips");
-            eventBus.emit({
-              type: "router.completed",
-              context,
-              payload: { toolId: null, confidence: 0, timestamp: context.clock.now() },
-            });
-            return { status: "no_capability", context, plan: { planId: context.requestId, goal: request.prompt, steps: [] } };
-          }
-
-          const availableTools = ToolRegistry.listTools();
-          const llmPrompt = configuredPromptManager.renderPrompt(context, availableTools);
-
-          eventBus.emit({
-            type: "llm.request",
-            context,
-            payload: { prompt: llmPrompt, timestamp: context.clock.now() },
-          });
-
-          let llmResponse: ModelResponse | null = null;
-          const retryAttempts = dependencies.hybridConfig?.retryAttempts ?? 1;
-          
-          for (let attempt = 0; attempt <= retryAttempts; attempt++) {
-            try {
-              llmResponse = await configuredModelProvider.generate(llmPrompt, {
-                model: dependencies.hybridConfig?.model,
-                timeout: dependencies.hybridConfig?.timeout,
-              });
-              circuitBreaker?.recordSuccess();
-              context.metrics.record("llm_success");
-              break; // Success, exit retry loop
-            } catch (rawError: unknown) {
-              const normalized = normalizeError(rawError);
-              if (normalized.code === "TIMEOUT") context.metrics.record("llm_timeout");
-              
-              if (attempt < retryAttempts && normalized.isRetryable) {
-                context.metrics.record("llm_retries");
-                continue;
-              }
-              
-              const wasOpen = circuitBreaker?.getState() === "OPEN";
-              circuitBreaker?.recordFailure();
-              if (circuitBreaker?.getState() === "OPEN" && !wasOpen) {
-                context.metrics.record("circuit_breaker_opens");
-              }
-              break;
-            }
-          }
-
-          if (!llmResponse) {
-            context.metrics.record("fallback_count");
-            routed = null;
-          } else {
-            eventBus.emit({
-              type: "llm.response",
-              context,
-              payload: { response: llmResponse, timestamp: context.clock.now() },
-            });
-
-            const llmDecision = configuredPromptManager.parseResponse(llmResponse.text);
-            const validation = DecisionValidator.validate(llmDecision);
-
-            if (!validation.isValid) {
-              context.metrics.record("llm_validation_failures");
-              context.metrics.record("fallback_count");
-              routed = null;
-            } else {
-              eventBus.emit({
-                type: "llm.decision",
-                context,
-                payload: { decision: llmDecision, timestamp: context.clock.now() },
-              });
-
-              if (llmDecision.type === "tool_selection" && llmDecision.toolName && llmDecision.confidence && llmDecision.confidence >= confidenceThresholds.llmMinConfidence) {
-                const llmSelectedTool = ToolRegistry.getTool(llmDecision.toolName);
-                if (llmSelectedTool) {
-                  routed = { tool: llmSelectedTool, args: llmDecision.toolArgs ?? {}, confidence: { score: llmDecision.confidence, reasoning: [llmDecision.reasoning] } };
-                } else {
-                  context.metrics.record("fallback_count");
-                  routed = null;
-                }
-              } else if (llmDecision.type === "clarification" && llmDecision.clarificationQuestion) {
-                return {
-                  status: "failed",
-                  context,
-                  plan: { planId: context.requestId, goal: request.prompt, steps: [] },
-                  tool: { name: "clarification", description: "Clarification needed", match: () => null, execute: async () => ({ type: "text", reply: "Clarification needed", data: {} }) },
-                  error: { code: "CLARIFICATION_NEEDED", message: llmDecision.clarificationQuestion, isRetryable: false },
-                };
-              } else {
-                routed = null;
-              }
-            }
-          }
-        }
-      }
-      // If after LLM consultation (or if LLM is disabled) there's still no routed tool,
-      // or if hybrid intelligence is explicitly disabled and deterministic router has low confidence,
-      // then fall back to no capability.
+      // Emit router.completed to preserve the pre-M19 event contract.
       eventBus.emit({
-        type: "router.completed",
+        type:    "router.completed",
         context,
         payload: {
-          toolId: routed?.tool.name ?? null,
-          confidence: routed?.confidence.score ?? 0,
-          timestamp: context.clock.now(),
+          toolId:     result.bridgeTool?.name ?? null,
+          confidence: result.handledBy === "tool" ? 1 : 0,
+          timestamp:  context.clock.now(),
         },
       });
 
-      if (!routed || ((!routed || routed.confidence.score < confidenceThresholds.routerMinConfidence) && !dependencies.hybridConfig?.enabled)) {
-        return { status: "no_capability", context, plan: { planId: context.requestId, goal: request.prompt, steps: [] } };
-      }
+      // Minimal AgentPlan stub — satisfies the response contract without
+      // re-running the internal planner (the orchestrator owns plan construction).
+      const minimalPlan: AgentPlan = {
+        planId: context.requestId,
+        goal:   request.prompt,
+        steps:  [],
+      };
 
-      // Supplying the router result constrains the planner to one selected tool
-      // and intentionally rules out autonomous/re-planning behavior in Phase 3A.
-      const planner = createPlanner(context, { selectedTool: routed });
-      const plan = planner.plan(request.prompt);
-
-      if (plan.steps.length === 0) {
-        return { status: "no_capability", context, plan };
-      }
-
-      const currentStep = plan.steps[0]!;
-      const tool = routed.tool;
-      eventBus.emit({
-        type: "tool.selected",
-        context,
-        payload: {
-          toolId: tool.name,
-          args: currentStep.inputs,
-          timestamp: context.clock.now(),
-        },
-      });
-
-      const executor = createToolExecutor(context);
-      const reflection = createReflectionEngine(context);
-      const reflectionHistory: { decision: ReflectionDecision }[] = [];
-
-      // Reflection may authorize a bounded retry of the same deterministic
-      // invocation. It cannot select a new capability or create a new plan.
-      for (;;) {
-        const execution = await executor.execute(tool, currentStep.inputs);
-        const observation = execution.status === "completed"
-          ? execution.result
-          : execution.error;
-        const decision = reflection.reflect(
-          observation,
-          currentStep,
-          0,
-          plan.steps.length,
-          reflectionHistory,
-        );
-        reflectionHistory.push({ decision });
-
-        if (decision.type === "retry") {
-          continue;
-        }
-
-        if (execution.status === "completed" && decision.type === "complete") {
+      // Translate ExecutionResult → AgentRuntimeResponse.
+      if (result.handledBy === "tool") {
+        if (result.success && result.bridgeTool && result.bridgeToolResult) {
           return {
             status: "completed",
             context,
-            plan,
-            tool,
-            result: execution.result,
+            plan:   minimalPlan,
+            tool:   result.bridgeTool,
+            result: result.bridgeToolResult,
           };
         }
-
-        return {
-          status: "failed",
-          context,
-          plan,
-          tool,
-          error: execution.status === "failed"
-            ? execution.error
-            : reflectionFailure(decision),
-        };
+        if (result.bridgeTool && result.bridgeToolError) {
+          return {
+            status: "failed",
+            context,
+            plan:  minimalPlan,
+            tool:  result.bridgeTool,
+            error: result.bridgeToolError,
+          };
+        }
       }
+
+      return { status: "no_capability", context, plan: minimalPlan };
     },
   };
 }

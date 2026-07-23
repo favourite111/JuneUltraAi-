@@ -994,6 +994,8 @@ async function handleChat(req: Request, res: Response): Promise<void> {
       toolName: planning.toolName,
       plan: planning.plan.map((step) => ({ ...step })),
     },
+    // M18 — pass the advisory ReasoningResult through to the Orchestrator.
+    reasoningResult: reasoning,
     eventBus,
     logger: req.log,
     metrics: {

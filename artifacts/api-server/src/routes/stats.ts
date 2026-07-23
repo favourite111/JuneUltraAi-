@@ -4,6 +4,7 @@ import { listBots } from "../lib/bot-registry.js";
 import { metricsCollector } from "../lib/memory-singletons.js";
 import { plannerMetrics } from "../lib/planner/index.js";
 import { reasonerMetrics } from "../lib/reasoner/index.js";
+import { orchestratorMetrics } from "../lib/orchestrator/index.js";
 
 // Injected at build time by esbuild define — no runtime file I/O
 declare const __APP_VERSION__: string;
