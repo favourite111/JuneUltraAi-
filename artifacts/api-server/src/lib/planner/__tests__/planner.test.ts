@@ -74,7 +74,7 @@ describe("M17 Agent Planning Engine", () => {
       lastActivityAt: 1,
       userMood: "calm",
       conversationStage: "active",
-      personalityTemp: 0,
+      personalityTemp: "neutral",
       questionChainDepth: 0,
       activeTopics: ["anatomy"],
       recentBotPhrases: [],
