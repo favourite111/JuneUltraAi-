@@ -1,12 +1,13 @@
 /**
  * Phase 3C — Milestone 7: Long-Term Knowledge Foundation
  *
- * KnowledgeManager provides typed CRUD operations over the long_term_knowledge
- * storage tier.  It is a standalone service — no EventBus wiring, no LLM calls,
- * no embeddings.
+ * KnowledgeManager owns the long-term knowledge lifecycle and orchestrates the
+ * injected embedding and vector-storage abstractions. It is not intelligent:
+ * it prepares deterministic source text, delegates embedding, and coordinates
+ * persistence and retrieval.
  *
  * Design constraints:
- *   - Purely deterministic (injectable clock via KnowledgeManagerOptions.nowFn).
+ *   - Purely deterministic apart from injected provider I/O.
  *   - Uses the existing StorageProvider contract without modifications.
  *   - Upsert is keyed by KnowledgeRecord.key (same pattern as UserFact in the
  *     user_profile tier).
@@ -25,6 +26,11 @@ import type {
   StorageKey,
   StorageProvider,
 } from "./types.js";
+import type { EmbeddingProvider } from "./embedding-provider.js";
+import type {
+  VectorSearchOptions,
+  VectorStorageProviderContract,
+} from "./providers/vector-storage-provider.js";
 
 // ---------------------------------------------------------------------------
 // Options & result types
@@ -72,6 +78,19 @@ export interface KnowledgeManagerOptions {
    * Default: () => Date.now().
    */
   readonly nowFn?: () => number;
+  /**
+   * Text-to-vector provider. Concrete implementations are selected by the
+   * composition root and never imported by KnowledgeManager.
+   */
+  readonly embeddingProvider?: EmbeddingProvider;
+  /**
+   * Derived vector index. It receives vectors, never source text.
+   */
+  readonly vectorStorageProvider?: VectorStorageProviderContract;
+}
+
+export interface KnowledgeRelevantOptions extends KnowledgeLoadOptions {
+  readonly similarityThreshold?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -94,12 +113,16 @@ const DEFAULT_LOAD_LIMIT = 200;
  */
 export class KnowledgeManager {
   private readonly nowFn: () => number;
+  private readonly embeddingProvider?: EmbeddingProvider;
+  private readonly vectorStorageProvider?: VectorStorageProviderContract;
 
   constructor(
     private readonly provider: StorageProvider,
     options?: KnowledgeManagerOptions,
   ) {
     this.nowFn = options?.nowFn ?? (() => Date.now());
+    this.embeddingProvider = options?.embeddingProvider;
+    this.vectorStorageProvider = options?.vectorStorageProvider;
   }
 
   // ---------------------------------------------------------------------------
@@ -116,6 +139,22 @@ export class KnowledgeManager {
    */
   async upsert(scope: MemoryScope, record: KnowledgeRecord): Promise<void> {
     await this.provider.upsert(this._key(scope), record.key, record);
+
+    if (this.embeddingProvider && this.vectorStorageProvider) {
+      const text = this.embeddingText(record);
+      const vector = await this.embeddingProvider.embed(text);
+      this.validateDimensions(vector);
+      await this.vectorStorageProvider.upsertVector(
+        scope,
+        record.key,
+        vector,
+        {
+          key: record.key,
+          version: record.version,
+          contentChecksum: this.contentChecksum(text),
+        },
+      );
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -175,6 +214,67 @@ export class KnowledgeManager {
     return results;
   }
 
+  /**
+   * Loads knowledge ranked by semantic similarity when vector dependencies are
+   * injected. Without them, it falls back to the deterministic knowledge
+   * ordering used by the original storage-only manager.
+   */
+  async loadRelevant(
+    scope: MemoryScope,
+    query: string | undefined,
+    options: KnowledgeRelevantOptions = {},
+  ): Promise<readonly KnowledgeRecord[]> {
+    if (!query || !this.embeddingProvider || !this.vectorStorageProvider) {
+      return this.load(scope, options);
+    }
+
+    try {
+      const queryVector = await this.embeddingProvider.embed(query);
+      this.validateDimensions(queryVector);
+
+      const vectorOptions: VectorSearchOptions = {
+        limit: options.limit ?? DEFAULT_LOAD_LIMIT,
+        similarityThreshold: options.similarityThreshold,
+      };
+      const matches = await this.vectorStorageProvider.searchVectors(
+        scope,
+        queryVector,
+        vectorOptions,
+      );
+      if (matches.length === 0) return this.load(scope, options);
+
+      const records = await this.provider.list<KnowledgeRecord>(this._key(scope), {
+        limit: DEFAULT_LOAD_LIMIT,
+        order: "asc",
+      });
+      const recordsByKey = new Map(records.map((record) => [record.key, record]));
+      const nowMs = this.nowFn();
+      const categories = options.categories ? new Set(options.categories) : undefined;
+      const minConfidence = options.minConfidence ?? 0;
+
+      const resolved = matches
+        .map((match) => recordsByKey.get(match.sourceId))
+        .filter((record): record is KnowledgeRecord => record !== undefined)
+        .filter((record) =>
+          options.includeExpired ||
+          record.expiresAt === undefined ||
+          record.expiresAt === null ||
+          record.expiresAt > nowMs,
+        )
+        .filter((record) => categories === undefined || categories.has(record.category))
+        .filter((record) => record.confidence >= minConfidence);
+
+      // A stale index can return IDs that no longer exist in authoritative
+      // storage. Do not make valid knowledge disappear in that state.
+      return resolved.length > 0 ? resolved : this.load(scope, options);
+    } catch {
+      // Vectors are a derived retrieval index; storage remains authoritative.
+      // Degrade to deterministic storage loading when embedding or vector I/O
+      // is unavailable, while preserving the existing load contract.
+      return this.load(scope, options);
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // remove()
   // ---------------------------------------------------------------------------
@@ -210,6 +310,7 @@ export class KnowledgeManager {
     for (const record of survivors) {
       await this.provider.upsert(storageKey, record.key, record);
     }
+    await this.vectorStorageProvider?.deleteVector(scope, key);
 
     return true;
   }
@@ -224,6 +325,7 @@ export class KnowledgeManager {
    */
   async removeAll(scope: MemoryScope): Promise<void> {
     await this.provider.delete(this._key(scope));
+    await this.vectorStorageProvider?.deleteScope(scope);
   }
 
   // ---------------------------------------------------------------------------
@@ -267,7 +369,7 @@ export class KnowledgeManager {
         skipped += 1;
         continue;
       }
-      await this.provider.upsert(storageKey, incoming.key, incoming);
+      await this.upsert(scope, incoming);
       upserted += 1;
     }
 
@@ -285,5 +387,29 @@ export class KnowledgeManager {
       botId:    scope.botId,
       userId:   scope.userId,
     };
+  }
+
+  private embeddingText(record: KnowledgeRecord): string {
+    return `${record.key} ${record.value}`;
+  }
+
+  private validateDimensions(vector: readonly number[]): void {
+    if (
+      this.embeddingProvider &&
+      vector.length !== this.embeddingProvider.dimensions
+    ) {
+      throw new RangeError(
+        `Embedding dimension mismatch: expected ${this.embeddingProvider.dimensions}, received ${vector.length}`,
+      );
+    }
+  }
+
+  private contentChecksum(text: string): string {
+    let hash = 2166136261;
+    for (let index = 0; index < text.length; index += 1) {
+      hash ^= text.charCodeAt(index);
+      hash = Math.imul(hash, 16777619);
+    }
+    return (hash >>> 0).toString(16).padStart(8, "0");
   }
 }

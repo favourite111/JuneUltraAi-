@@ -43,6 +43,7 @@ import {
   type ConversationSummarizer,
   ExtractiveConversationSummarizer,
 } from "./conversation-summarizer.js";
+import type { KnowledgeManager } from "./knowledge-manager.js";
 
 // ---------------------------------------------------------------------------
 // Internal constants
@@ -185,6 +186,7 @@ export class DefaultMemoryManager implements MemoryManager {
     private readonly eventBus?: EventBus,
     estimator?: TokenEstimator,
     summarizer?: ConversationSummarizer,
+    private readonly knowledgeManager?: KnowledgeManager,
   ) {
     this.estimator = estimator ?? new CharacterTokenEstimator();
     this.summarizer = summarizer ?? new ExtractiveConversationSummarizer();
@@ -217,10 +219,6 @@ export class DefaultMemoryManager implements MemoryManager {
     });
 
     try {
-      // Thread the optional query hint into list calls that benefit from
-      // relevance ranking (conversation and user_profile tiers).
-      // When queryHint is absent, similarityQuery is undefined and providers
-      // fall back to their default insertion-order behaviour (ADR-005 §13.1).
       const queryHint = scope.queryHint;
 
       // Fetch all tiers concurrently; individual failures default to null / [].
@@ -254,17 +252,16 @@ export class DefaultMemoryManager implements MemoryManager {
             })
             .catch(() => [] as ToolExecutionRecord[]),
 
-          this.provider
-            .list<KnowledgeRecord>(makeLongTermKnowledgeKey(scope), {
-              limit: DEFAULT_KNOWLEDGE_LIMIT,
-              order: "asc",
-              // Thread queryHint so a VectorStorageProvider wired for this tier
-              // can rank knowledge records by semantic similarity (ADR-005 §13.3,
-              // Milestone 8).  Non-vector providers ignore similarityQuery as per
-              // the existing ListOptions contract.
-              similarityQuery: queryHint,
-            })
-            .catch(() => [] as KnowledgeRecord[]),
+          this.knowledgeManager
+            ? this.knowledgeManager
+                .loadRelevant(scope, queryHint, { limit: DEFAULT_KNOWLEDGE_LIMIT })
+                .catch(() => [] as KnowledgeRecord[])
+            : this.provider
+                .list<KnowledgeRecord>(makeLongTermKnowledgeKey(scope), {
+                  limit: DEFAULT_KNOWLEDGE_LIMIT,
+                  order: "asc",
+                })
+                .catch(() => [] as KnowledgeRecord[]),
         ]);
 
       // Conversation: when no query hint, provider returned desc; reverse to chronological order.
@@ -437,13 +434,13 @@ export class DefaultMemoryManager implements MemoryManager {
 
     // -- Long-term knowledge (upsert into map keyed by record.key) ----------
     if (updates.knowledgeRecords && updates.knowledgeRecords.length > 0) {
-      const key = makeLongTermKnowledgeKey(scope);
       for (const record of updates.knowledgeRecords) {
-        writes.push(
-          this.provider.upsert(key, record.key, record).catch(() => {
-            // best-effort
-          }),
-        );
+        writes.push((this.knowledgeManager
+          ? this.knowledgeManager.upsert(scope, record)
+          : this.provider.upsert(makeLongTermKnowledgeKey(scope), record.key, record)
+        ).catch(() => {
+          // best-effort
+        }));
       }
       tiersWritten.push("long_term_knowledge");
     }
@@ -471,6 +468,7 @@ export class DefaultMemoryManager implements MemoryManager {
    */
   async forget(scope: MemoryScope): Promise<void> {
     try {
+      await this.knowledgeManager?.removeAll(scope);
       await this.provider.delete(makeScopePrefix(scope));
     } catch (cause) {
       throw new MemoryError("forget", scope, cause);

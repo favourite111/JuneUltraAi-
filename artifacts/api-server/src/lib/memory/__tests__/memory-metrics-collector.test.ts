@@ -134,7 +134,7 @@ function evLoadStarted(requestId: string, timestamp: number): AgentEvent {
     type: "memory.load_started",
     context: fakeCtx(requestId),
     payload: {
-      scope: { tenantId: "t1", botId: "b1", userId: "u1", sessionId: "s1" },
+      scope: { tenantId: "t1", botId: "b1", userId: "u1", sessionId: "s1", requestId },
       timestamp,
     },
   };
@@ -178,7 +178,7 @@ function evRecordStarted(requestId: string, timestamp: number): AgentEvent {
     type: "memory.record_started",
     context: fakeCtx(requestId),
     payload: {
-      scope: { tenantId: "t1", botId: "b1", userId: "u1", sessionId: "s1" },
+      scope: { tenantId: "t1", botId: "b1", userId: "u1", sessionId: "s1", requestId },
       timestamp,
     },
   };
@@ -241,7 +241,7 @@ function evForgotten(requestId: string, tiersCleared: MemoryTierId[]): AgentEven
     type: "memory.forgotten",
     context: fakeCtx(requestId),
     payload: {
-      scope: { tenantId: "t1", botId: "b1", userId: "u1" },
+      scope: { tenantId: "t1", botId: "b1", userId: "u1", requestId },
       tiersCleared,
       timestamp: NOW_MS,
     },

@@ -1,3 +1,4 @@
 - [esbuild + pdfkit runtime asset loading](esbuild-pdfkit-fonts.md) — pdfkit's standard fonts fail at runtime after esbuild bundling; must copy its `data/` dir into the output dir post-build.
 - [Replit built-in Postgres uses sslmode=disable](replit-builtin-db-sslmode.md) — hardcoded ssl:"require" in imported DB clients breaks against Replit's DATABASE_URL; derive ssl from the connection string.
 - [Tool trigger false positives from passive mentions](tool-trigger-false-positives.md) — keyword tool matchers must gate on intent (action verb/payload clue), not just phrase presence, or they fire on casual mentions.
+- [Embedding and vector boundaries](embedding-vector-boundary.md) — providers translate, KnowledgeManager orchestrates, and authoritative storage must outlive derived vector indexes.

@@ -18,11 +18,12 @@ export type {
   ForgetMetricsSnapshot,
   MemoryMetricsSnapshot,
 } from "./memory-metrics-collector.js";
-export { KnowledgeManager } from "./knowledge-manager.js";
-export type {
-  KnowledgeLoadOptions,
-  MergeResult,
-  KnowledgeManagerOptions,
+export {
+  KnowledgeManager,
+  type KnowledgeLoadOptions,
+  type KnowledgeManagerOptions,
+  type KnowledgeRelevantOptions,
+  type MergeResult,
 } from "./knowledge-manager.js";
 export { CharacterTokenEstimator } from "./token-estimator.js";
 export type { TokenEstimator } from "./token-estimator.js";
@@ -40,7 +41,13 @@ export {
 export type { EmbeddingProvider } from "./embedding-provider.js";
 export { PostgresStorageProvider } from "./providers/postgres-storage-provider.js";
 export { InMemoryStorageProvider } from "./providers/in-memory-storage-provider.js";
-export { VectorStorageProvider } from "./providers/vector-storage-provider.js";
+export {
+  VectorStorageProvider,
+  type VectorMetadata,
+  type VectorSearchOptions,
+  type VectorSearchResult,
+  type VectorStorageProviderContract,
+} from "./providers/vector-storage-provider.js";
 
 export type {
   MemoryTierId,

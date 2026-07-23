@@ -26,6 +26,7 @@ The design of JUNE_ULTRA_AI is guided by several key architectural principles:
 *   **Deterministic Execution**: Ensures that given the same inputs, the system will always produce the same outputs, crucial for testing, debugging, and reliable operation. This is achieved through immutable execution contexts and explicit dependency injection.
 *   **Layered Design**: Components are organized into distinct layers with clear responsibilities and dependencies, promoting modularity, maintainability, and scalability.
 *   **Hybrid Intelligence**: Combines deterministic tool routing with flexible LLM-driven decision-making, allowing the system to leverage the strengths of both approaches.
+*   **Architecture Law #15 — Role Separation**: A provider translates, a manager orchestrates, and a runtime executes. Never swap these roles.
 *   **Structured Memory**: Implements a tiered memory system to manage conversational context, user facts, and tool execution records, enabling more coherent and personalized interactions.
 *   **Observability**: Integrates an Event Bus for emitting lifecycle events, providing insights into the system's internal workings and facilitating debugging and monitoring.
 *   **ADR-Driven Development**: Architectural decisions are formally documented using Architecture Decision Records (ADRs), ensuring transparency, traceability, and consistency in design choices.

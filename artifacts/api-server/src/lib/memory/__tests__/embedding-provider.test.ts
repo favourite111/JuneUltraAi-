@@ -67,7 +67,7 @@ import {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function isNormalized(v: number[], tol = 1e-9): boolean {
+function isNormalized(v: readonly number[], tol = 1e-9): boolean {
   return Math.abs(l2Norm(v) - 1) < tol;
 }
 

@@ -2,19 +2,16 @@
  * Phase 3C — EmbeddingProvider abstraction (ADR-005, Milestone 8)
  *
  * Provides a deterministic, injectable text-to-vector embedding function used
- * by VectorStorageProvider to build and query the per-key vector index.
+ * by KnowledgeManager to coordinate vector indexing and retrieval.
  *
  * The interface is intentionally async so that future implementations backed
  * by remote services (OpenAI embeddings, pgvector, Pinecone, Weaviate) can
  * fulfil it without any interface change — preparing the architecture for
  * ADR-006 without implementing it now.
  *
- * Design constraints:
- *   - embed() must be deterministic: equal inputs always produce equal vectors
- *   - embed() must return a fixed-length non-negative vector (L2-normalised)
- *   - The default implementation must be completely offline (no network)
- *   - embed("") must return a zero vector of the correct dimensionality
- *   - Vectors are non-negative so cosineSimilarity() ∈ [0, 1]
+ * The interface is intentionally minimal. Provider adapters translate their
+ * native model response into a fixed-dimensional vector; storage and
+ * orchestration policies remain outside this abstraction.
  */
 
 import { tokenise } from "./relevance-scorer.js";
@@ -38,21 +35,18 @@ export const EMBEDDING_DIMENSIONS = 128;
  * Converts a text string into a fixed-length numeric vector.
  *
  * Contract:
- *   - Returns a `number[]` of exactly `dimensions` elements.
- *   - All elements are finite (no NaN, no Infinity).
- *   - The vector is L2-normalised (‖v‖₂ = 1.0), or a zero vector when the
- *     input produces no tokens.
- *   - embed("") returns a zero vector of the correct dimensionality.
- *   - Must never throw.
+ *   - Returns a readonly vector of exactly `dimensions` elements.
+ *   - Adapter failures are explicit; callers must not interpret failures as
+ *     zero vectors or successful embeddings.
  *
- * Async to accommodate future remote embedding backends without interface
- * change.  Synchronous implementations resolve immediately.
+ * Async to accommodate remote and worker-backed providers without changing
+ * consumers. Synchronous implementations resolve immediately.
  */
 export interface EmbeddingProvider {
   /** Fixed number of dimensions in every vector this provider produces. */
   readonly dimensions: number;
 
-  embed(text: string): Promise<number[]>;
+  embed(text: string): Promise<readonly number[]>;
 }
 
 // ---------------------------------------------------------------------------
@@ -79,11 +73,10 @@ export function l2Normalize(v: readonly number[]): number[] {
 }
 
 /**
- * Computes cosine similarity between two L2-normalised vectors.
+ * Computes cosine similarity between two vectors.
  *
- * When both vectors are L2-normalised the dot product equals cosine similarity.
- * Non-negative input vectors (as produced by HashingEmbeddingProvider) yield
- * a result in [0.0, 1.0].
+ * The result may be negative for signed vectors. Callers that need a
+ * non-negative score must define that policy at the search boundary.
  *
  * Returns 0.0 for mismatched dimensionality or zero vectors.
  */

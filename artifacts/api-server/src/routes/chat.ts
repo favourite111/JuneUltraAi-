@@ -14,7 +14,10 @@ import { createDeterministicAgentRuntime } from "../lib/tools/runtime.js";
 import { AgentEventBus } from "../lib/tools/event-bus.js";
 import {
   DefaultMemoryManager,
+  HashingEmbeddingProvider,
+  KnowledgeManager,
   PostgresStorageProvider,
+  VectorStorageProvider,
   DEFAULT_CONTEXT_BUDGET,
 } from "../lib/memory/index.js";
 import {
@@ -42,7 +45,19 @@ const SHIZO_KEY = "shizo";
 // The composition root owns non-deterministic production providers. The
 // runtime itself receives them only through dependency injection, enabling
 // deterministic recordings and replay tests with alternate providers.
-const memoryManager = new DefaultMemoryManager(new PostgresStorageProvider());
+const storageProvider = new PostgresStorageProvider();
+const vectorStorageProvider = new VectorStorageProvider();
+const knowledgeManager = new KnowledgeManager(storageProvider, {
+  embeddingProvider: new HashingEmbeddingProvider(),
+  vectorStorageProvider,
+});
+const memoryManager = new DefaultMemoryManager(
+  storageProvider,
+  undefined,
+  undefined,
+  undefined,
+  knowledgeManager,
+);
 
 const deterministicToolRuntime = createDeterministicAgentRuntime({
   clock: { now: () => Date.now() },
@@ -842,6 +857,7 @@ async function handleChat(req: Request, res: Response): Promise<void> {
     userId,
     groupId,
     requestId,
+    queryHint: prompt,
   };
   const memoryContext = await memoryManager.load(memoryScope, DEFAULT_CONTEXT_BUDGET);
 

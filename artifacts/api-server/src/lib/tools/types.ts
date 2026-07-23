@@ -10,6 +10,10 @@
 // Phase 3B — import memory types (one-way dependency: tools → memory, never memory → tools)
 import type { MemoryContext, MemoryScope, MemoryTierId } from "../memory/types.js";
 
+// Re-export the memory tier discriminator for event consumers that already
+// depend on the tool event contract.
+export type { MemoryTierId } from "../memory/types.js";
+
 export interface ToolContext {
   botId: string;
   userId: string;

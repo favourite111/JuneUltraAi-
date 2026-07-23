@@ -253,7 +253,7 @@ describe("ExtractiveConversationSummarizer", () => {
   it("summarize() is synchronous (returns a string, not a Promise)", () => {
     const result = summarizer.summarize([makeUserTurn("hello")]);
     expect(typeof result).toBe("string");
-    expect(result instanceof Promise).toBe(false);
+    expect(result).not.toBeInstanceOf(Promise);
   });
 
   it("does not throw for turns with unusual content (numbers, symbols)", () => {

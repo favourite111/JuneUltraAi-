@@ -1,259 +1,241 @@
 /**
- * Phase 3C — Knowledge tier vector retrieval integration tests (Milestone 8)
+ * Phase 3C — Embedding/provider orchestration tests (Milestone 9)
  *
- * Verifies the complete queryHint → similarityQuery → VectorStorageProvider
- * → knowledge records path through DefaultMemoryManager.load().
+ * These tests verify the approved boundaries:
+ *   KnowledgeManager -> EmbeddingProvider -> VectorStorageProvider
+ *   MemoryManager -> KnowledgeManager
  *
- * Covers:
- *   queryHint threading to knowledge tier
- *     - scope.queryHint is now passed as similarityQuery to the knowledge list() call
- *     - without queryHint, knowledge list() call has no similarityQuery
- *
- *   End-to-end knowledge relevance ranking
- *     - with VectorStorageProvider wired and queryHint set, most-relevant
- *       knowledge records appear first in MemoryContext.knowledgeRecords
- *     - without queryHint, records are sorted by importance × confidence (M7 order)
- *     - expired records are excluded regardless of similarity score
- *
- *   VectorStorageProvider as drop-in replacement
- *     - DefaultMemoryManager constructor signature unchanged
- *     - VectorStorageProvider passed as the StorageProvider param works
- *     - all other tiers (session, conversation, userFacts, toolSummary) are
- *       unaffected by VectorStorageProvider wrapping
- *
- *   similarityThreshold threading
- *     - when VectorStorageProvider wired with a low threshold, results include
- *       all records above that threshold
- *
- *   Backward compatibility
- *     - InMemoryStorageProvider (no vector) still works as before for M8
- *       (knowledge records sorted by importance × confidence, not by similarity)
- *     - scopes without queryHint produce identical results to pre-M8
+ * StorageProvider remains the authoritative generic knowledge store.
  */
 
-import { describe, it, expect, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { DefaultMemoryManager } from "../memory-manager.js";
+import { KnowledgeManager } from "../knowledge-manager.js";
+import { HashingEmbeddingProvider } from "../embedding-provider.js";
 import { InMemoryStorageProvider } from "../providers/in-memory-storage-provider.js";
 import { VectorStorageProvider } from "../providers/vector-storage-provider.js";
 import {
   DEFAULT_CONTEXT_BUDGET,
   type KnowledgeRecord,
   type MemoryScope,
-  type StorageKey,
   type StorageProvider,
   type WriteResult,
 } from "../types.js";
 
-// ---------------------------------------------------------------------------
-// Fixtures
-// ---------------------------------------------------------------------------
-
-const BASE_SCOPE: MemoryScope = {
-  tenantId: "t1",
-  botId:    "b1",
-  userId:   "u1",
-  sessionId: "s1",
-  requestId: "req-1",
+const SCOPE: MemoryScope = {
+  tenantId: "tenant",
+  botId: "bot",
+  userId: "user",
+  sessionId: "session",
+  requestId: "request",
 };
 
-const WITH_HINT = (hint: string): MemoryScope => ({ ...BASE_SCOPE, queryHint: hint });
-
-const KR_KEY: StorageKey = {
-  tier:     "long_term_knowledge",
-  tenantId: "t1",
-  botId:    "b1",
-  userId:   "u1",
-};
-
-function makeKR(
+function makeRecord(
   key: string,
   value: string,
   overrides: Partial<KnowledgeRecord> = {},
 ): KnowledgeRecord {
   return {
-    recordId:   `rec-${key}`,
+    recordId: `record-${key}`,
     key,
     value,
-    category:   "preference",
-    confidence: 0.8,
-    importance: 0.7,
-    source:     "explicit",
-    tags:       [],
-    createdAt:  1_000_000,
-    updatedAt:  1_000_000,
-    version:    1,
+    category: "context",
+    confidence: 0.9,
+    importance: 0.8,
+    source: "explicit",
+    tags: [],
+    createdAt: 1_000,
+    updatedAt: 1_000,
+    version: 1,
     ...overrides,
   };
 }
 
-const FAKE_WRITE_RESULT: WriteResult = {
-  revision:  1,
-  etag:      "abc",
-  updatedAt: 1_000_000,
+const WRITE_RESULT: WriteResult = {
+  revision: 1,
+  etag: "etag",
+  updatedAt: 1_000,
 };
 
-function makeFakeProvider(): StorageProvider {
+function fakeStorage(): StorageProvider {
   return {
-    read:   vi.fn().mockResolvedValue(null),
-    list:   vi.fn().mockResolvedValue([]),
-    write:  vi.fn().mockResolvedValue(FAKE_WRITE_RESULT),
-    append: vi.fn().mockResolvedValue(FAKE_WRITE_RESULT),
-    upsert: vi.fn().mockResolvedValue(FAKE_WRITE_RESULT),
+    read: vi.fn().mockResolvedValue(null),
+    list: vi.fn().mockResolvedValue([]),
+    write: vi.fn().mockResolvedValue(WRITE_RESULT),
+    append: vi.fn().mockResolvedValue(WRITE_RESULT),
+    upsert: vi.fn().mockResolvedValue(WRITE_RESULT),
     delete: vi.fn().mockResolvedValue(undefined),
     health: vi.fn().mockResolvedValue("ok"),
   };
 }
 
-// ---------------------------------------------------------------------------
-// queryHint threading — verified against fake provider call args
-// ---------------------------------------------------------------------------
+describe("KnowledgeManager provider orchestration", () => {
+  it("generates embeddings through injection and stores vectors separately", async () => {
+    const storage = new InMemoryStorageProvider();
+    const vectorStorage = new VectorStorageProvider();
+    const embeddingProvider = new HashingEmbeddingProvider(8);
+    const embed = vi.spyOn(embeddingProvider, "embed");
+    const manager = new KnowledgeManager(storage, {
+      embeddingProvider,
+      vectorStorageProvider: vectorStorage,
+    });
 
-describe("DefaultMemoryManager.load() — queryHint threading to knowledge tier", () => {
-  it("passes queryHint as similarityQuery to the long_term_knowledge list() call", async () => {
-    const provider = makeFakeProvider();
-    const manager  = new DefaultMemoryManager(provider);
+    await manager.upsert(SCOPE, makeRecord("project", "building a memory system"));
 
-    await manager.load(WITH_HINT("building memory system"), DEFAULT_CONTEXT_BUDGET);
-
-    const listCalls = vi.mocked(provider.list).mock.calls;
-    const krCall    = listCalls.find(([key]) => (key as StorageKey).tier === "long_term_knowledge");
-    expect(krCall).toBeDefined();
-    expect(krCall![1].similarityQuery).toBe("building memory system");
+    expect(embed).toHaveBeenCalledWith("project building a memory system");
+    expect(vectorStorage.listIndexSize(SCOPE)).toBe(1);
+    expect(await manager.loadRelevant(SCOPE, "memory system")).toEqual([
+      expect.objectContaining({ key: "project" }),
+    ]);
   });
 
-  it("similarityQuery is undefined for knowledge list() when queryHint is absent", async () => {
-    const provider = makeFakeProvider();
-    const manager  = new DefaultMemoryManager(provider);
+  it("keeps storage authoritative when vector indexing fails", async () => {
+    const storage = new InMemoryStorageProvider();
+    const vectorStorage = new VectorStorageProvider();
+    const embeddingProvider = {
+      dimensions: 2,
+      embed: vi.fn().mockRejectedValue(new Error("provider unavailable")),
+    };
+    const manager = new KnowledgeManager(storage, {
+      embeddingProvider,
+      vectorStorageProvider: vectorStorage,
+    });
 
-    await manager.load(BASE_SCOPE, DEFAULT_CONTEXT_BUDGET);
+    await expect(manager.upsert(SCOPE, makeRecord("fact", "stored value"))).rejects.toThrow(
+      "provider unavailable",
+    );
+    expect(await manager.load(SCOPE)).toEqual([
+      expect.objectContaining({ key: "fact" }),
+    ]);
+  });
 
-    const listCalls = vi.mocked(provider.list).mock.calls;
-    const krCall    = listCalls.find(([key]) => (key as StorageKey).tier === "long_term_knowledge");
-    expect(krCall).toBeDefined();
-    expect(krCall![1].similarityQuery).toBeUndefined();
+  it("rejects an embedding whose dimensions do not match the provider contract", async () => {
+    const storage = new InMemoryStorageProvider();
+    const manager = new KnowledgeManager(storage, {
+      embeddingProvider: {
+        dimensions: 3,
+        embed: vi.fn().mockResolvedValue([1, 0]),
+      },
+      vectorStorageProvider: new VectorStorageProvider(),
+    });
+
+    await expect(manager.upsert(SCOPE, makeRecord("fact", "value"))).rejects.toThrow(
+      "Embedding dimension mismatch",
+    );
+  });
+
+  it("uses vector ranking only through KnowledgeManager", async () => {
+    const storage = new InMemoryStorageProvider();
+    const vectors = new VectorStorageProvider();
+    const embeddingProvider = new HashingEmbeddingProvider(32);
+    const manager = new KnowledgeManager(storage, {
+      embeddingProvider,
+      vectorStorageProvider: vectors,
+    });
+
+    await manager.upsert(SCOPE, makeRecord("weather", "rain forecast"));
+    await manager.upsert(SCOPE, makeRecord("food", "pizza cooking recipe"));
+
+    const results = await manager.loadRelevant(SCOPE, "pizza cooking", { limit: 1 });
+    expect(results).toHaveLength(1);
+    expect(results[0]?.key).toBe("food");
+  });
+
+  it("removes derived vectors with knowledge records", async () => {
+    const storage = new InMemoryStorageProvider();
+    const vectors = new VectorStorageProvider();
+    const manager = new KnowledgeManager(storage, {
+      embeddingProvider: new HashingEmbeddingProvider(8),
+      vectorStorageProvider: vectors,
+    });
+
+    await manager.upsert(SCOPE, makeRecord("fact", "value"));
+    expect(vectors.listIndexSize(SCOPE)).toBe(1);
+
+    await manager.remove(SCOPE, "fact");
+    expect(vectors.listIndexSize(SCOPE)).toBe(0);
+    expect(await manager.load(SCOPE)).toEqual([]);
+  });
+
+  it("falls back to authoritative storage when vectors are missing", async () => {
+    const storage = new InMemoryStorageProvider();
+    const vectors = new VectorStorageProvider();
+    const manager = new KnowledgeManager(storage, {
+      embeddingProvider: new HashingEmbeddingProvider(8),
+      vectorStorageProvider: vectors,
+    });
+
+    await storage.upsert(
+      {
+        tier: "long_term_knowledge",
+        tenantId: SCOPE.tenantId,
+        botId: SCOPE.botId,
+        userId: SCOPE.userId,
+      },
+      "legacy",
+      makeRecord("legacy", "written before vector indexing"),
+    );
+
+    const results = await manager.loadRelevant(SCOPE, "vector query");
+    expect(results).toEqual([expect.objectContaining({ key: "legacy" })]);
   });
 });
 
-// ---------------------------------------------------------------------------
-// End-to-end: VectorStorageProvider wired as DefaultMemoryManager's provider
-// ---------------------------------------------------------------------------
+describe("DefaultMemoryManager knowledge boundary", () => {
+  it("uses KnowledgeManager for semantic knowledge loading", async () => {
+    const storage = new InMemoryStorageProvider();
+    const knowledgeManager = new KnowledgeManager(storage, {
+      embeddingProvider: new HashingEmbeddingProvider(16),
+      vectorStorageProvider: new VectorStorageProvider(),
+    });
+    const memoryManager = new DefaultMemoryManager(
+      storage,
+      undefined,
+      undefined,
+      undefined,
+      knowledgeManager,
+    );
 
-describe("DefaultMemoryManager.load() — VectorStorageProvider end-to-end", () => {
-  it("most-relevant knowledge records appear first when queryHint is set", async () => {
-    const inner    = new InMemoryStorageProvider();
-    const vsp      = new VectorStorageProvider(inner);
-    const manager  = new DefaultMemoryManager(vsp);
-
-    // Insert records covering very different domains
-    await vsp.upsert(KR_KEY, "cooking",  makeKR("cooking",  "loves pizza pasta cooking recipes"));
-    await vsp.upsert(KR_KEY, "reading",  makeKR("reading",  "enjoys reading science fiction novels"));
-    await vsp.upsert(KR_KEY, "location", makeKR("location", "lives in London near the Thames river"));
-
-    const ctx = await manager.load(
-      WITH_HINT("pizza cooking food recipes"),
+    await knowledgeManager.upsert(SCOPE, makeRecord("project", "vector architecture"));
+    const context = await memoryManager.load(
+      { ...SCOPE, queryHint: "vector architecture" },
       DEFAULT_CONTEXT_BUDGET,
     );
 
-    // The cooking record should rank first
-    expect(ctx.knowledgeRecords[0]?.key).toBe("cooking");
+    expect(context.knowledgeRecords[0]?.key).toBe("project");
   });
 
-  it("without queryHint, records are sorted by importance × confidence descending", async () => {
-    const inner   = new InMemoryStorageProvider();
-    const vsp     = new VectorStorageProvider(inner);
-    const manager = new DefaultMemoryManager(vsp);
+  it("does not pass semantic query text to generic StorageProvider", async () => {
+    const storage = fakeStorage();
+    const memoryManager = new DefaultMemoryManager(storage);
 
-    // Insert with varying importance
-    await vsp.upsert(KR_KEY, "low",  makeKR("low",  "something low",  { importance: 0.3, confidence: 0.9 }));
-    await vsp.upsert(KR_KEY, "high", makeKR("high", "something high", { importance: 0.9, confidence: 0.9 }));
-    await vsp.upsert(KR_KEY, "mid",  makeKR("mid",  "something mid",  { importance: 0.6, confidence: 0.9 }));
+    await memoryManager.load(
+      { ...SCOPE, queryHint: "semantic query" },
+      DEFAULT_CONTEXT_BUDGET,
+    );
 
-    const ctx = await manager.load(BASE_SCOPE, DEFAULT_CONTEXT_BUDGET);
-
-    // Without queryHint, sorted by importance × confidence desc (M7 order)
-    expect(ctx.knowledgeRecords[0]?.key).toBe("high");
-    expect(ctx.knowledgeRecords[1]?.key).toBe("mid");
-    expect(ctx.knowledgeRecords[2]?.key).toBe("low");
+    const knowledgeCall = (storage.list as ReturnType<typeof vi.fn>).mock.calls.find(
+      ([key]) => (key as { tier?: string }).tier === "long_term_knowledge",
+    );
+    expect(knowledgeCall?.[1].similarityQuery).toBeUndefined();
   });
 
-  it("expired records are excluded regardless of similarity score", async () => {
-    const inner   = new InMemoryStorageProvider();
-    const vsp     = new VectorStorageProvider(inner);
-    const manager = new DefaultMemoryManager(vsp);
+  it("preserves the existing load signature and generic-storage fallback", async () => {
+    const storage = new InMemoryStorageProvider();
+    const memoryManager = new DefaultMemoryManager(storage);
 
-    const pastMs = Date.now() - 1_000;
-    // Expired but highly relevant
-    await vsp.upsert(KR_KEY, "expired", makeKR("expired", "pizza cooking food", { expiresAt: pastMs }));
-    // Not expired, less relevant
-    await vsp.upsert(KR_KEY, "active",  makeKR("active",  "reading books library"));
+    await storage.upsert(
+      {
+        tier: "long_term_knowledge",
+        tenantId: SCOPE.tenantId,
+        botId: SCOPE.botId,
+        userId: SCOPE.userId,
+      },
+      "priority",
+      makeRecord("priority", "stored directly", { importance: 0.99 }),
+    );
 
-    const ctx = await manager.load(WITH_HINT("pizza cooking"), DEFAULT_CONTEXT_BUDGET);
-
-    const ids = ctx.knowledgeRecords.map((r) => r.key);
-    expect(ids).not.toContain("expired");
-    expect(ids).toContain("active");
-  });
-
-  it("VectorStorageProvider does not affect session, conversation, userFacts, or toolSummary tiers", async () => {
-    const inner   = new InMemoryStorageProvider();
-    const vsp     = new VectorStorageProvider(inner);
-    const manager = new DefaultMemoryManager(vsp);
-
-    // All other tiers empty — context should have empty fields
-    const ctx = await manager.load(WITH_HINT("any query"), DEFAULT_CONTEXT_BUDGET);
-
-    expect(ctx.session).toBeNull();
-    expect(ctx.conversation).toHaveLength(0);
-    expect(ctx.userFacts).toHaveLength(0);
-    expect(ctx.toolSummary).toBeNull();
-  });
-});
-
-// ---------------------------------------------------------------------------
-// DefaultMemoryManager constructor signature — unchanged
-// ---------------------------------------------------------------------------
-
-describe("DefaultMemoryManager — constructor unchanged", () => {
-  it("VectorStorageProvider is passable as the first constructor arg (StorageProvider)", () => {
-    const vsp = new VectorStorageProvider(new InMemoryStorageProvider());
-    expect(() => new DefaultMemoryManager(vsp)).not.toThrow();
-  });
-
-  it("load() signature is unchanged: load(scope, budget) — no new parameters", async () => {
-    const vsp     = new VectorStorageProvider(new InMemoryStorageProvider());
-    const manager = new DefaultMemoryManager(vsp);
-    await expect(manager.load(BASE_SCOPE, DEFAULT_CONTEXT_BUDGET)).resolves.toBeDefined();
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Backward compatibility — InMemoryStorageProvider still works unchanged
-// ---------------------------------------------------------------------------
-
-describe("InMemoryStorageProvider — unchanged backward compatibility after M8", () => {
-  it("knowledge records sorted by importance × confidence when no VectorStorageProvider", async () => {
-    const inner   = new InMemoryStorageProvider();
-    const manager = new DefaultMemoryManager(inner);
-
-    await inner.upsert(KR_KEY, "low",  makeKR("low",  "low priority", { importance: 0.2 }));
-    await inner.upsert(KR_KEY, "high", makeKR("high", "high priority", { importance: 0.95 }));
-
-    const ctx = await manager.load(BASE_SCOPE, DEFAULT_CONTEXT_BUDGET);
-
-    expect(ctx.knowledgeRecords[0]?.key).toBe("high");
-  });
-
-  it("queryHint with InMemoryStorageProvider falls back to Jaccard ranking (not vector)", async () => {
-    const inner   = new InMemoryStorageProvider();
-    const manager = new DefaultMemoryManager(inner);
-
-    // InMemoryStorageProvider uses TermOverlapRelevanceScorer for similarityQuery
-    await inner.upsert(KR_KEY, "food",  makeKR("food",  "loves pizza pasta cooking"));
-    await inner.upsert(KR_KEY, "other", makeKR("other", "xylophone quantum zephyr"));
-
-    const ctx = await manager.load(WITH_HINT("pizza cooking"), DEFAULT_CONTEXT_BUDGET);
-
-    // food record should rank higher due to Jaccard overlap
-    expect(ctx.knowledgeRecords[0]?.key).toBe("food");
+    const context = await memoryManager.load(SCOPE, DEFAULT_CONTEXT_BUDGET);
+    expect(context.knowledgeRecords[0]?.key).toBe("priority");
   });
 });
