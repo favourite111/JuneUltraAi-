@@ -3,3 +3,5 @@
 - [Tool trigger false positives from passive mentions](tool-trigger-false-positives.md) — keyword tool matchers must gate on intent (action verb/payload clue), not just phrase presence, or they fire on casual mentions.
 - [Embedding and vector boundaries](embedding-vector-boundary.md) — providers translate, KnowledgeManager orchestrates, and authoritative storage must outlive derived vector indexes.
 - [Hybrid retrieval ownership](hybrid-retrieval-ownership.md) — deterministic results lead, semantic candidates append by semantic order, and KnowledgeManager alone owns final ordering.
+- [Memory maintenance startup order](memory-maintenance-startup.md) — start background pruning only after schema initialization, or fresh boots query tables before they exist.
+- [Planner ownership](planner-ownership.md) — planning owns intent, clarification, and tool-vs-answer decisions above the frozen memory architecture.

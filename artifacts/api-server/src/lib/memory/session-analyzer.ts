@@ -55,7 +55,7 @@ const TASK_PATTERNS: Array<{ task: string; patterns: RegExp[] }> = [
  * @param history Recent conversation history (optional).
  * @returns Inferred session attributes.
  */
-export function analyzeSession(message: string, history: any[] = []): SessionInference {
+export function analyzeSession(message: string, _history: readonly unknown[] = []): SessionInference {
   const inference: SessionInference = {};
 
   // 1. Infer Mood

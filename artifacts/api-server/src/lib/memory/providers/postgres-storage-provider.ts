@@ -25,14 +25,23 @@
 
 import { getSql } from "../../db.js";
 import {
+  type ConversationTurn,
   type ListOptions,
   type ScopePrefix,
   type StorageKey,
   type StorageProvider,
+  type ToolExecutionRecord,
+  type UserFact,
   type WriteOptions,
   type WriteResult,
   WriteConflictError,
 } from "../types.js";
+
+function conversationKey(key: StorageKey): string {
+  return key.qualifier
+    ? `${key.botId}::${key.qualifier}::${key.userId}`
+    : `${key.botId}::${key.userId}`;
+}
 
 export class PostgresStorageProvider implements StorageProvider {
   private readonly sql = getSql();
@@ -76,7 +85,7 @@ export class PostgresStorageProvider implements StorageProvider {
       const rows = await this.sql`
         SELECT messages
         FROM conversations
-        WHERE bot_id = ${key.botId} AND user_id = ${key.userId}
+        WHERE conversation_key = ${conversationKey(key)}
       `;
       if (rows.length === 0) return [];
       
@@ -198,10 +207,10 @@ export class PostgresStorageProvider implements StorageProvider {
   async append<T>(key: StorageKey, value: T, options?: WriteOptions): Promise<WriteResult> {
     const now = new Date();
     if (key.tier === "conversation") {
-      const message = value as any;
+      const message = value as ConversationTurn;
       await this.sql`
-        INSERT INTO conversations (conversation_key, bot_id, user_id, messages, last_activity)
-        VALUES (${key.botId + '::' + key.userId}, ${key.botId}, ${key.userId}, ${JSON.stringify([message])}, NOW())
+        INSERT INTO conversations (conversation_key, bot_id, user_id, group_id, messages, last_activity)
+        VALUES (${conversationKey(key)}, ${key.botId}, ${key.userId}, ${key.qualifier ?? null}, ${JSON.stringify([message])}, NOW())
         ON CONFLICT (conversation_key)
         DO UPDATE SET 
           messages = conversations.messages || ${JSON.stringify([message])}::jsonb,
@@ -211,10 +220,16 @@ export class PostgresStorageProvider implements StorageProvider {
     }
 
     if (key.tier === "tool_execution") {
-      const record = value as any;
+      const record = value as ToolExecutionRecord;
+      const metadata = JSON.stringify({
+        args: record.args,
+        result: record.result,
+        error: record.error,
+        reflectionDecision: record.reflectionDecision,
+      });
       await this.sql`
         INSERT INTO tool_executions (bot_id, user_id, session_id, tool_name, execution_time, success, metadata)
-        VALUES (${key.botId}, ${key.userId}, ${key.qualifier ?? 'default'}, ${record.toolName}, ${new Date(record.executionTime)}, ${record.success}, ${JSON.stringify(record.metadata)}::jsonb)
+        VALUES (${key.botId}, ${key.userId}, ${key.qualifier ?? 'default'}, ${record.toolName}, ${new Date(record.timestamp)}, ${!record.error}, ${metadata}::jsonb)
       `;
     }
 
@@ -227,8 +242,8 @@ export class PostgresStorageProvider implements StorageProvider {
 
   async upsert<T>(key: StorageKey, entryKey: string, value: T, options?: WriteOptions): Promise<WriteResult> {
     if (key.tier === "user_profile") {
-      const fact = value as any;
-      const factValue = typeof fact === 'object' ? JSON.stringify(fact) : String(fact);
+      const fact = value as UserFact;
+      const factValue = JSON.stringify(fact);
       
       await this.sql`
         INSERT INTO user_facts (bot_id, user_id, fact_key, fact_value, updated_at)
@@ -260,7 +275,7 @@ export class PostgresStorageProvider implements StorageProvider {
     if ("tier" in key) {
       const sk = key as StorageKey;
       if (sk.tier === "conversation") {
-        await this.sql`DELETE FROM conversations WHERE bot_id = ${sk.botId} AND user_id = ${sk.userId}`;
+        await this.sql`DELETE FROM conversations WHERE conversation_key = ${conversationKey(sk)}`;
       } else if (sk.tier === "user_profile") {
         await this.sql`DELETE FROM user_facts WHERE bot_id = ${sk.botId} AND user_id = ${sk.userId}`;
       } else if (sk.tier === "long_term_knowledge") {
@@ -268,11 +283,23 @@ export class PostgresStorageProvider implements StorageProvider {
       }
     } else {
       const sp = key as ScopePrefix;
-      await Promise.all([
-        this.sql`DELETE FROM conversations WHERE bot_id = ${sp.botId} AND user_id = ${sp.userId}`,
-        this.sql`DELETE FROM user_facts WHERE bot_id = ${sp.botId} AND user_id = ${sp.userId}`,
-        this.sql`DELETE FROM long_term_knowledge WHERE bot_id = ${sp.botId} AND user_id = ${sp.userId}`,
-      ]);
+      if (sp.userId === undefined) {
+        await Promise.all([
+          this.sql`DELETE FROM conversations WHERE bot_id = ${sp.botId}`,
+          this.sql`DELETE FROM user_facts WHERE bot_id = ${sp.botId}`,
+          this.sql`DELETE FROM long_term_knowledge WHERE bot_id = ${sp.botId}`,
+          this.sql`DELETE FROM sessions WHERE bot_id = ${sp.botId}`,
+          this.sql`DELETE FROM tool_executions WHERE bot_id = ${sp.botId}`,
+        ]);
+      } else {
+        await Promise.all([
+          this.sql`DELETE FROM conversations WHERE bot_id = ${sp.botId} AND user_id = ${sp.userId}`,
+          this.sql`DELETE FROM user_facts WHERE bot_id = ${sp.botId} AND user_id = ${sp.userId}`,
+          this.sql`DELETE FROM long_term_knowledge WHERE bot_id = ${sp.botId} AND user_id = ${sp.userId}`,
+          this.sql`DELETE FROM sessions WHERE bot_id = ${sp.botId} AND user_id = ${sp.userId}`,
+          this.sql`DELETE FROM tool_executions WHERE bot_id = ${sp.botId} AND user_id = ${sp.userId}`,
+        ]);
+      }
     }
   }
 

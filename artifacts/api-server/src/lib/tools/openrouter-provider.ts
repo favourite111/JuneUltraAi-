@@ -33,8 +33,9 @@ export class OpenRouterModelProvider implements ModelProvider {
 
         clearTimeout(id);
         return { text: completion.choices[0]?.message?.content || "" };
-      } catch (error: any) {
-        if (error.name === "AbortError") {
+      } catch (error: unknown) {
+        const errorName = error instanceof Error ? error.name : undefined;
+        if (errorName === "AbortError") {
           console.warn(`LLM call timed out after ${timeout}ms (attempt ${attempt + 1}/${retryAttempts + 1})`);
         } else {
           console.error(`LLM call failed (attempt ${attempt + 1}/${retryAttempts + 1}):`, error);

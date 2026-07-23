@@ -107,7 +107,7 @@ export const storagePruner = new StoragePruner(storageProvider, {
  * Runs every 4 hours to clean up expired sessions and prune conversation history.
  * Only one instance exists as it is part of the singleton module initialization.
  */
-async function startPrunerScheduler() {
+export function startPrunerScheduler(): void {
   const FOUR_HOURS = 4 * 60 * 60 * 1000;
   
   const runPrune = async () => {
@@ -153,6 +153,3 @@ async function startPrunerScheduler() {
   void runPrune();
   setInterval(runPrune, FOUR_HOURS);
 }
-
-// M15-F1: Start the scheduler
-void startPrunerScheduler();

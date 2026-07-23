@@ -41,6 +41,15 @@ export interface AgentRuntimeDependencies extends ExecutionContextDependencies {
 
 export interface AgentRuntimeRequest extends ExecutionContextInput {
   readonly prompt: string;
+  /**
+   * Optional M17 planning decision. When present, the planner owns the
+   * tool/no-tool gate; the legacy router still resolves the concrete tool.
+   */
+  readonly planningDecision?: {
+    readonly needsTool: boolean;
+    readonly toolName?: string;
+    readonly toolArgs?: unknown;
+  };
 }
 
 export interface CompletedRuntimeResponse {
@@ -116,10 +125,27 @@ export function createDeterministicAgentRuntime(
         payload: { prompt: request.prompt, timestamp: context.clock.now() },
       });
 
-      let routed = router(request.prompt);
+      let routed = request.planningDecision?.needsTool === false
+        ? null
+        : request.planningDecision?.toolName
+          ? (() => {
+              const plannedTool = ToolRegistry.getTool(request.planningDecision!.toolName!);
+              return plannedTool
+                ? {
+                    tool: plannedTool,
+                    args: request.planningDecision!.toolArgs ?? {},
+                    confidence: { score: 1, reasoning: ["M17 planner-selected tool"] },
+                  }
+                : null;
+            })()
+          : router(request.prompt);
 
       // If deterministic router has low confidence and hybrid intelligence is enabled, consult the LLM
-      if ((!routed || routed.confidence.score < confidenceThresholds.routerMinConfidence) && dependencies.hybridConfig?.enabled) {
+      if (
+        request.planningDecision === undefined &&
+        (!routed || routed.confidence.score < confidenceThresholds.routerMinConfidence) &&
+        dependencies.hybridConfig?.enabled
+      ) {
         if (configuredModelProvider && configuredPromptManager) {
           context.metrics.record("llm_requests");
 
@@ -155,7 +181,7 @@ export function createDeterministicAgentRuntime(
               circuitBreaker?.recordSuccess();
               context.metrics.record("llm_success");
               break; // Success, exit retry loop
-            } catch (rawError: any) {
+            } catch (rawError: unknown) {
               const normalized = normalizeError(rawError);
               if (normalized.code === "TIMEOUT") context.metrics.record("llm_timeout");
               

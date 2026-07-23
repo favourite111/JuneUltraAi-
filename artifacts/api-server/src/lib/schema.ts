@@ -1,11 +1,11 @@
 import { getSql } from "./db.js";
 import { logger } from "./logger.js";
-import { startCleanupJob } from "./conversation-store.js";
+import { startPrunerScheduler } from "./memory-singletons.js";
 import { startTopicCleanupJob } from "./pending-topics.js";
 
 /**
- * Creates the bots + conversations tables if they don't exist, and starts
- * the background sweeps (hourly inactive-conversation cleanup).
+ * Creates the application tables if they don't exist and starts the pending
+ * topic cleanup job. Memory retention is owned by the storage-pruner.
  */
 export async function ensureSchema(): Promise<void> {
   const sql = getSql();
@@ -39,7 +39,7 @@ export async function ensureSchema(): Promise<void> {
   await sql`CREATE INDEX IF NOT EXISTS idx_conv_group_id ON conversations (group_id) WHERE group_id IS NOT NULL`;
 
   // User memory — objective personal facts (name, likes, etc.) per user per bot.
-  // Authority/identity claims are never stored here; that enforcement is in user-memory.ts.
+  // User-profile records are validated by the Knowledge pipeline before storage.
   await sql`
     CREATE TABLE IF NOT EXISTS user_facts (
       bot_id      TEXT NOT NULL,
@@ -125,6 +125,6 @@ export async function ensureSchema(): Promise<void> {
 
   logger.info("Neon schema ready");
 
-  startCleanupJob();
   startTopicCleanupJob();
+  startPrunerScheduler();
 }

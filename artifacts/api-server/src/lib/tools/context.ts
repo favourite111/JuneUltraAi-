@@ -1,5 +1,6 @@
 import type {
   ExecutionContext,
+  ExecutionContextClock,
   ExecutionContextDependencies,
   ExecutionContextInput,
 } from "./types.js";
@@ -41,7 +42,8 @@ export function createExecutionContext(
   input: ExecutionContextInput,
   dependencies: ExecutionContextDependencies,
 ): ExecutionContext {
-  const clock = (input as any).clock ?? dependencies.clock;
+  const inputWithClock = input as ExecutionContextInput & { readonly clock?: ExecutionContextClock };
+  const clock = inputWithClock.clock ?? dependencies.clock;
   const requestId = dependencies.idGenerator.next();
   const timestamp = clock.now();
   const correlationId = input.correlationId ?? requestId;

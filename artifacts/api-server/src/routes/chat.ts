@@ -2,18 +2,13 @@ import { randomUUID } from "node:crypto";
 import { Router, type IRouter, type Request, type Response } from "express";
 import { requireApiKey } from "../middlewares/auth.js";
 import { rateLimit } from "../middlewares/rate-limit.js";
-import {
-  buildConversationKey,
-  appendMessages,
-  resetConversation,
-  resetAllConversations,
-  type Message,
-} from "../lib/conversation-store.js";
 import { createDeterministicAgentRuntime } from "../lib/tools/runtime.js";
 import { AgentEventBus } from "../lib/tools/event-bus.js";
 import {
   DEFAULT_CONTEXT_BUDGET,
+  type ConversationTurn,
   type MemoryContext,
+  type MemoryScope,
   type UserFact as MemoryUserFact,
 } from "../lib/memory/index.js";
 import { memoryManager } from "../lib/memory-singletons.js";
@@ -21,10 +16,8 @@ import { extractKnowledge } from "../lib/memory/knowledge-extractor.js";
 import { scoreFact } from "../lib/memory/confidence-scorer.js";
 import { isSaneFact } from "../lib/memory/memory-sanity-check.js";
 import { analyzeSession } from "../lib/memory/session-analyzer.js";
-import {
-  extractFacts,
-  deleteAllFacts,
-} from "../lib/user-memory.js";
+import { agentPlanner, type PlanningResult } from "../lib/planner/index.js";
+import { ToolRegistry } from "../lib/tools/registry.js";
 import {
   getOpenTopics,
   savePendingTopic,
@@ -50,6 +43,44 @@ const deterministicToolRuntime = createDeterministicAgentRuntime({
   idGenerator: { next: () => randomUUID() },
   memoryManager,
 });
+
+interface Message {
+  role: "user" | "assistant";
+  speaker: string;
+  content: string;
+  ts: number;
+}
+
+function buildConversationKey(botId: string, userId: string, groupId?: string): string {
+  return groupId ? `${botId}::${groupId}::${userId}` : `${botId}::${userId}`;
+}
+
+function toConversationTurns(
+  scope: Pick<MemoryScope, "requestId">,
+  messages: readonly Message[],
+): ConversationTurn[] {
+  return messages.map((message) => ({
+    turnId: randomUUID(),
+    requestId: scope.requestId,
+    role: message.role,
+    content: message.content,
+    timestamp: message.ts * 1000,
+  }));
+}
+
+function renderPlanningContext(planning: PlanningResult): string {
+  const steps = planning.plan
+    .map((item) => `${item.step}. ${item.description}`)
+    .join("\n");
+  return [
+    "PLANNING DECISION:",
+    `Intent: ${planning.intent}`,
+    `Confidence: ${planning.confidence.toFixed(2)}`,
+    `Memory needed: ${planning.needsMemory ? "yes" : "no"}`,
+    `Tool needed: ${planning.needsTool ? "yes" : "no"}`,
+    steps ? `Plan:\n${steps}` : "Plan: answer directly.",
+  ].join("\n");
+}
 
 // ---------------------------------------------------------------------------
 // Limits
@@ -651,7 +682,7 @@ const MAX_FACTS_IN_PROMPT = 8;
 
 /**
  * Formats MemoryContext.userFacts as a compact one-liner for prompt injection.
- * Replaces the legacy formatFactsForPrompt(Record<string, string>) from user-memory.ts.
+ * Keeps prompt formatting at the boundary while MemoryManager owns fact loading.
  * Facts arrive pre-sorted importance × confidence desc from MemoryManager.load().
  */
 function formatUserFactsForPrompt(facts: readonly MemoryUserFact[]): string {
@@ -674,7 +705,7 @@ function renderMemoryContext(ctx: MemoryContext): string {
     const s = ctx.session;
     const sessionParts: string[] = [];
     if (s.userMood) sessionParts.push(`Mood: ${s.userMood}`);
-    if ((s as any).currentTask) sessionParts.push(`Current Task: ${(s as any).currentTask}`);
+    if (s.currentTask) sessionParts.push(`Current Task: ${s.currentTask}`);
     if (s.activeTopics && s.activeTopics.length > 0) sessionParts.push(`Active Topics: ${s.activeTopics.join(", ")}`);
     if (s.conversationStage) sessionParts.push(`Stage: ${s.conversationStage}`);
 
@@ -695,38 +726,6 @@ function renderMemoryContext(ctx: MemoryContext): string {
   }
 
   return parts.join("\n");
-}
-
-// ---------------------------------------------------------------------------
-// Legacy fact converter (Phase 3C — M13)
-// Maps extractFacts() { key, value } pairs to the full MemoryUserFact shape
-// so new facts flow through memoryManager.record() instead of saveFacts().
-// ---------------------------------------------------------------------------
-
-const FACT_IMPORTANCE_MAP: Record<string, number> = {
-  name: 1.0, nickname: 1.0, language: 0.95,
-  from: 0.80, age: 0.70,
-  likes: 0.50, dislikes: 0.50, favorite: 0.50,
-};
-
-let _factIdSeq = 0;
-
-function toLongTermUserFact(
-  f: { key: string; value: string },
-  nowMs: number,
-): MemoryUserFact {
-  return {
-    factId:      `fact-${nowMs}-${++_factIdSeq}`,
-    key:         f.key,
-    value:       f.value,
-    confidence:  1.0,
-    importance:  FACT_IMPORTANCE_MAP[f.key] ?? 0.50,
-    source:      "explicit",
-    createdAt:   nowMs,
-    confirmedAt: nowMs,
-    sensitive:   false,
-    decayed:     false,
-  };
 }
 
 // ---------------------------------------------------------------------------
@@ -935,6 +934,28 @@ async function handleChat(req: Request, res: Response): Promise<void> {
     queryHint: prompt,
   };
   const memoryContext = await memoryManager.load(memoryScope, DEFAULT_CONTEXT_BUDGET);
+  const planning = agentPlanner.plan({
+    message: prompt,
+    sessionContext: memoryContext.session,
+    knowledge: memoryContext.knowledgeRecords,
+    availableTools: ToolRegistry.listTools().map((tool) => ({
+      name: tool.name,
+      description: tool.description,
+    })),
+    runtimeState: memoryContext,
+  });
+
+  if (planning.needsClarification) {
+    res.json({
+      success: true,
+      handledBy: "planner",
+      intent: planning.intent,
+      planning,
+      reply: planning.clarificationQuestion,
+      conversationKey: convKey,
+    });
+    return;
+  }
 
   const runtimeResponse = await deterministicToolRuntime.execute({
     prompt,
@@ -949,6 +970,20 @@ async function handleChat(req: Request, res: Response): Promise<void> {
       history: memoryContext.conversation,
     },
     memoryContext,
+    planningDecision: {
+      needsTool: planning.needsTool,
+      toolName: planning.toolName,
+      toolArgs: planning.toolArgs,
+    },
+    plannerState: {
+      intent: planning.intent,
+      confidence: planning.confidence,
+      needsMemory: planning.needsMemory,
+      needsTool: planning.needsTool,
+      needsClarification: planning.needsClarification,
+      toolName: planning.toolName,
+      plan: planning.plan.map((step) => ({ ...step })),
+    },
     eventBus,
     logger: req.log,
     metrics: {
@@ -960,10 +995,12 @@ async function handleChat(req: Request, res: Response): Promise<void> {
   if (runtimeResponse.status === "completed") {
     const { result, tool } = runtimeResponse;
     const now = Math.floor(Date.now() / 1000);
+    const newMessages: Message[] = [
+      { role: "user", speaker: userId, content: prompt, ts: now },
+      { role: "assistant", speaker: "june", content: result.reply, ts: now },
+    ];
     
-    // Phase 3C — M13: record tool execution only; conversation writes go through
-    // appendMessages() below to keep the JSONB column in a single Message format.
-    void memoryManager.record(memoryScope, {
+    await memoryManager.record(memoryScope, {
       toolOutputs: [{
         executionId: randomUUID(),
         requestId,
@@ -975,13 +1012,8 @@ async function handleChat(req: Request, res: Response): Promise<void> {
         durationMs: 0,
         timestamp: now,
       }],
+      conversationTurns: toConversationTurns(memoryScope, newMessages),
     });
-
-    const newMessages: Message[] = [
-      { role: "user",      speaker: userId, content: prompt,       ts: now },
-      { role: "assistant", speaker: "june", content: result.reply, ts: now },
-    ];
-    await appendMessages(convKey, botId, userId, groupId, newMessages);
 
     res.json({
       success: true,
@@ -990,6 +1022,7 @@ async function handleChat(req: Request, res: Response): Promise<void> {
       type: result.type,
       reply: result.reply,
       data: result.data,
+      planning,
       conversationKey: convKey,
     });
     return;
@@ -1010,8 +1043,17 @@ async function handleChat(req: Request, res: Response): Promise<void> {
     return;
   }
 
-  // Phase 3C — M13: getHistory() and getFacts() removed; data comes from memoryContext.
-  // (already loaded above via memoryManager.load() — no second DB round-trip needed).
+  if (planning.needsTool) {
+    res.status(501).json({
+      success: false,
+      handledBy: "planner",
+      error: `Required tool is unavailable: ${planning.toolName ?? "unknown"}`,
+      planning,
+      conversationKey: convKey,
+    });
+    return;
+  }
+
   const openTopics = await getOpenTopics(botId, userId);
 
   // memoryContext.conversation is already budgeted and sanitized by the MemoryManager.
@@ -1053,7 +1095,15 @@ async function handleChat(req: Request, res: Response): Promise<void> {
     reply = metaReply;
   } else {
     const memCtxBlock = renderMemoryContext(memoryContext);
-    const aiPrompt = buildPromptFitted(prompt, history, userId, groupId, state, factsLine, memCtxBlock);
+    const aiPrompt = buildPromptFitted(
+      prompt,
+      history,
+      userId,
+      groupId,
+      state,
+      factsLine,
+      `${renderPlanningContext(planning)}\n${memCtxBlock}`,
+    );
 
     const AI_TIMEOUT_MS = 18_000;
     const controller    = new AbortController();
@@ -1095,13 +1145,14 @@ async function handleChat(req: Request, res: Response): Promise<void> {
           handledBy: "ai",
           reply: "Taking a bit long on my end 😅 try again in a sec",
           model: "JUNE_ULTRA_AI",
+          planning,
           conversationKey: convKey,
         });
         return;
       }
 
       req.log.error({ err }, "Chat endpoint error");
-      res.status(500).json({ success: false, error: "Internal error" });
+      res.status(500).json({ success: false, error: "Internal error", planning });
       return;
     }
   }
@@ -1117,7 +1168,9 @@ async function handleChat(req: Request, res: Response): Promise<void> {
     { role: "user",      speaker: userId, content: storedPrompt, ts: now },
     { role: "assistant", speaker: "june", content: reply,        ts: now },
   ];
-  await appendMessages(convKey, botId, userId, groupId, newMessages);
+  await memoryManager.record(memoryScope, {
+    conversationTurns: toConversationTurns(memoryScope, newMessages),
+  });
 
   // Milestone 14 — Knowledge Synthesis Pipeline
   // Deterministic extraction -> Confidence scoring -> Sanity check -> Persistence
@@ -1141,18 +1194,6 @@ async function handleChat(req: Request, res: Response): Promise<void> {
     void memoryManager.record(memoryScope, {
       userFacts: synthesizedFacts,
     });
-  }
-
-  // Legacy fallback for simple regex patterns not yet covered by M14
-  const legacyFacts = extractFacts(prompt);
-  if (legacyFacts.length > 0) {
-    const existingKeys = new Set(synthesizedFacts.map(f => f.key));
-    const uniqueLegacy = legacyFacts.filter(f => !existingKeys.has(f.key));
-    if (uniqueLegacy.length > 0) {
-      void memoryManager.record(memoryScope, {
-        userFacts: uniqueLegacy.map(f => toLongTermUserFact(f, now * 1000)),
-      });
-    }
   }
 
   // Curiosity Memory: when June responds with curiosity, the user opened a thread
@@ -1183,7 +1224,7 @@ async function handleChat(req: Request, res: Response): Promise<void> {
       greetingDone:       state.greetingDone,
       // currentTask added in M15
       ...((sessionInference.currentTask) ? { currentTask: sessionInference.currentTask } : {}),
-    } as any,
+    },
   });
 
   res.json({
@@ -1191,6 +1232,7 @@ async function handleChat(req: Request, res: Response): Promise<void> {
     handledBy: "ai",
     reply,
     model: "JUNE_ULTRA_AI",
+    planning,
     conversationKey: convKey,
   });
 }
@@ -1220,20 +1262,26 @@ router.delete("/", requireApiKey, async (req: Request, res: Response) => {
   // ── Global wipe: no userId → clear ALL conversations for this bot ──────────
   // This is what chatbot.js calls via clearRemoteHistory(null, null) on factory reset.
   if (!userId) {
-    const [deleted] = await Promise.all([
-      resetAllConversations(req.botId),
+    await Promise.all([
+      memoryManager.forgetBot({ tenantId: "default", botId: req.botId }),
       closeAllTopicsForBot(req.botId),
-      deleteAllFacts(req.botId),
     ]);
-    req.log.info({ botId: req.botId, deletedConversations: deleted }, "DELETE /v1/chat → global wipe complete");
-    res.json({ success: true, message: "All conversations reset", botId: req.botId, deleted });
+    req.log.info({ botId: req.botId }, "DELETE /v1/chat → global wipe complete");
+    res.json({ success: true, message: "All memory reset", botId: req.botId });
     return;
   }
 
   // ── Single-user reset ──────────────────────────────────────────────────────
   const convKey = buildConversationKey(req.botId, userId, groupId);
+  const memoryScope: MemoryScope = {
+    tenantId: "default",
+    botId: req.botId,
+    userId,
+    groupId,
+    requestId: randomUUID(),
+  };
   await Promise.all([
-    resetConversation(convKey),
+    memoryManager.clearConversation(memoryScope),
     closeAllTopics(req.botId, userId),
   ]);
   req.log.info({ botId: req.botId, userId, convKey }, "DELETE /v1/chat → single-user reset complete");
