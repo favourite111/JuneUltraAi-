@@ -30,8 +30,17 @@ export { ExtractiveConversationSummarizer } from "./conversation-summarizer.js";
 export type { ConversationSummarizer } from "./conversation-summarizer.js";
 export { TermOverlapRelevanceScorer, tokenise } from "./relevance-scorer.js";
 export type { RelevanceScorer } from "./relevance-scorer.js";
+export {
+  HashingEmbeddingProvider,
+  cosineSimilarity,
+  l2Norm,
+  l2Normalize,
+  EMBEDDING_DIMENSIONS,
+} from "./embedding-provider.js";
+export type { EmbeddingProvider } from "./embedding-provider.js";
 export { PostgresStorageProvider } from "./providers/postgres-storage-provider.js";
 export { InMemoryStorageProvider } from "./providers/in-memory-storage-provider.js";
+export { VectorStorageProvider } from "./providers/vector-storage-provider.js";
 
 export type {
   MemoryTierId,

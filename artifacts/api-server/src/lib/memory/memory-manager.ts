@@ -258,7 +258,11 @@ export class DefaultMemoryManager implements MemoryManager {
             .list<KnowledgeRecord>(makeLongTermKnowledgeKey(scope), {
               limit: DEFAULT_KNOWLEDGE_LIMIT,
               order: "asc",
-              // Knowledge records are re-sorted by relevance below.
+              // Thread queryHint so a VectorStorageProvider wired for this tier
+              // can rank knowledge records by semantic similarity (ADR-005 §13.3,
+              // Milestone 8).  Non-vector providers ignore similarityQuery as per
+              // the existing ListOptions contract.
+              similarityQuery: queryHint,
             })
             .catch(() => [] as KnowledgeRecord[]),
         ]);
