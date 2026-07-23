@@ -6,69 +6,68 @@ Vector and Embedding Architecture for JUNE_ULTRA_AI (Deferred)
 ## 2. Status
 Proposed (Deferred)
 
-## 3. Context
-As JUNE_ULTRA_AI evolves into a more intelligent agent, the ability to store, retrieve, and reason over vast amounts of contextual information (memory, knowledge base) becomes critical. This necessitates a robust vector and embedding architecture that can handle various embedding providers, vector databases, and re-indexing strategies. This ADR outlines the future architectural considerations for managing vector embeddings, with a specific focus on the metadata required for a production-grade system.
+## 3. Context & Motivation
+As JUNE_ULTRA_AI evolves into a more intelligent agent, the ability to store, retrieve, and reason over vast amounts of contextual information (memory, knowledge base) becomes critical. Current memory systems are primarily based on simple conversation history. To scale, we need a robust vector and embedding architecture that can handle semantic search, long-term memory retrieval, and external knowledge integration. This ADR provides the blueprint for that future system.
 
-## 4. Decision
-This ADR proposes a future architecture for managing vector embeddings within JUNE_ULTRA_AI. The implementation of this architecture is deferred to a later phase (e.g., Phase 3C or Phase 4), as the current focus is on establishing the core Agent Runtime (Phase 3A) and Hybrid Intelligence (Phase 3B). This document serves as a forward-looking design note to ensure future compatibility and avoid architectural debt.
+## 4. Scope
+*   Defining the interface for embedding providers and vector stores.
+*   Specifying the metadata required for production-grade vector management.
+*   Outlining the lifecycle of a knowledge entry (chunking, embedding, storage).
 
-## 5. Core Components and Responsibilities (Future)
+## 5. Non-goals
+*   Implementation of vector storage in the current phase (Phase 3A).
+*   Selection of specific vector database providers (e.g., Pinecone vs. pgvector).
+*   Development of custom embedding models.
+
+## 6. Decision
+This ADR proposes a future architecture for managing vector embeddings within JUNE_ULTRA_AI. The implementation is deferred to ensure focus on the core Agent Runtime. This document serves as a forward-looking design note to ensure future compatibility.
+
+## 7. Architecture Overview (Future)
 
 ### A. Embedding Provider Interface
-*   **Responsibility**: Abstract away different LLM embedding models (e.g., OpenAI, Cohere, local models).
-*   **Behavior**: Provides a unified `embed(text: string): Promise<number[]>` method, handling model selection, API calls, and rate limiting.
+*   **Responsibility**: Abstract away different LLM embedding models.
+*   **Behavior**: Provides a unified `embed(text: string): Promise<number[]>` method.
 
 ### B. Vector Store Interface
-*   **Responsibility**: Abstract away different vector databases (e.g., pgvector, Pinecone, Chroma).
-*   **Behavior**: Provides methods for `add(vectors: Vector[], metadata: KnowledgeVectorMetadata[]): Promise<void>`, `query(vector: number[], topK: number): Promise<QueryResult[]>`, and `delete(vectorIds: string[]): Promise<void>`.
+*   **Responsibility**: Abstract away different vector databases.
+*   **Behavior**: Provides methods for `add`, `query`, and `delete` operations.
 
 ### C. Knowledge Base Service
-*   **Responsibility**: Manages the lifecycle of knowledge entries, including chunking, embedding, storage, and retrieval.
-*   **Behavior**: Orchestrates interactions between the Embedding Provider and Vector Store. Handles re-indexing, data synchronization, and ensures data integrity.
+*   **Responsibility**: Manages chunking, embedding, and synchronization.
 
-### D. KnowledgeVectorMetadata (Deferred Recommendation)
-To support advanced features like embedding versioning, provider tracking, and efficient re-indexing, every stored vector will be associated with comprehensive metadata. This metadata will be crucial for debugging, auditing, and evolving the knowledge base over time.
+## 8. KnowledgeVectorMetadata (Deferred Recommendation)
+To support advanced features like embedding versioning and efficient re-indexing, every stored vector will be associated with comprehensive metadata.
 
 ```typescript
 export interface KnowledgeVectorMetadata {
-    /** Unique identifier for the vector entry. */
     vectorId: string;
-    /** The provider used to generate the embedding (e.g., "openai", "cohere"). */
     embeddingProvider: string;
-    /** The specific model used for embedding (e.g., "text-embedding-ada-002", "embed-english-v3.0"). */
     embeddingModel: string;
-    /** Version of the embedding model or embedding strategy. */
     embeddingVersion: string;
-    /** Dimensionality of the embedding vector. */
     dimensions: number;
-    /** Timestamp when the embedding was created. */
     createdAt: number;
-    /** Timestamp when the source content was last embedded/re-indexed. */
     lastEmbeddedAt: number;
-    /** Checksum or hash of the original content to detect changes. */
     checksum: string;
-    /** Optional: Reference to the original source document or chunk. */
     sourceRef?: string;
-    /** Any other relevant context-specific metadata. */
     [key: string]: any;
 }
 ```
 
-## 6. Scope (What will NOT be implemented in current phase)
+## 9. Future Migration Path
+The transition to this architecture will be handled by a dedicated `KnowledgeMigrationService`. This service will be responsible for:
+1.  Identifying existing data that needs to be vectorized.
+2.  Batch embedding and storing data in the new vector store.
+3.  Updating existing memory references to include vector IDs.
 
-This ADR is purely a design document. No code changes related to vector storage or embedding generation will be implemented in the current phase (Phase 3A). The `KnowledgeVectorMetadata` interface is a deferred recommendation for future implementation.
+## 10. Compatibility with ADR-005
+This architecture is designed to be fully compatible with **ADR-005: Contextual Memory Architecture**. While ADR-005 focuses on the high-level organization of memory (Facts, History, Context), ADR-006 provides the low-level technical foundation (Vectors, Embeddings) for making that memory semantically searchable and scalable.
 
-## 7. Alignment with Overall Architecture
+## 11. Consequences
+-   **Positive**: Prevents architectural debt; ensures robust knowledge management.
+-   **Negative**: None in the current phase; future complexity will be managed through these defined interfaces.
 
-This deferred architecture aligns with the long-term vision of JUNE_ULTRA_AI as an Agent Operating System. By defining this now, we ensure that when memory and knowledge base capabilities are introduced, they integrate seamlessly with the existing runtime and event-driven architecture, supporting advanced features like memory-aware planning and reflection.
-
-## 8. Consequences
-
--   **Positive**: Provides a clear roadmap for future knowledge management, preventing architectural debt. Ensures that when vector storage is implemented, it is robust and well-thought-out. Facilitates easier integration of diverse embedding models and vector databases.
--   **Negative**: None in the current phase, as this is a deferred design. Potential for increased complexity in future phases if not carefully managed.
-
-## 9. Decision Makers
+## 12. Decision Makers
 Manus AI, User, and User's Advisor.
 
-## 10. Date
+## 13. Date
 July 23, 2026
