@@ -1,5 +1,6 @@
 export { agentPlanner, createAgentPlanner } from "./planner.js";
 export { plannerMetrics, PlannerMetrics } from "./planner-metrics.js";
+export type { PlannerMetricsRecorder } from "./planner-metrics.js";
 export type {
   PlannerIntent,
   PlannerTool,

@@ -973,6 +973,7 @@ async function handleChat(req: Request, res: Response): Promise<void> {
     planningDecision: {
       needsTool: planning.needsTool,
       toolName: planning.toolName,
+      toolArgs: planning.toolArgs,
     },
     plannerState: {
       intent: planning.intent,
@@ -1038,6 +1039,17 @@ async function handleChat(req: Request, res: Response): Promise<void> {
       tool: runtimeResponse.tool.name,
       error: "Tool execution failed",
       reply: "Couldn't get that done right now 😩 try again in a bit",
+    });
+    return;
+  }
+
+  if (planning.needsTool) {
+    res.status(501).json({
+      success: false,
+      handledBy: "planner",
+      error: `Required tool is unavailable: ${planning.toolName ?? "unknown"}`,
+      planning,
+      conversationKey: convKey,
     });
     return;
   }

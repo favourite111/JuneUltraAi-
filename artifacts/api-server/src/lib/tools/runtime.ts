@@ -48,6 +48,7 @@ export interface AgentRuntimeRequest extends ExecutionContextInput {
   readonly planningDecision?: {
     readonly needsTool: boolean;
     readonly toolName?: string;
+    readonly toolArgs?: unknown;
   };
 }
 
@@ -126,11 +127,22 @@ export function createDeterministicAgentRuntime(
 
       let routed = request.planningDecision?.needsTool === false
         ? null
-        : router(request.prompt);
+        : request.planningDecision?.toolName
+          ? (() => {
+              const plannedTool = ToolRegistry.getTool(request.planningDecision!.toolName!);
+              return plannedTool
+                ? {
+                    tool: plannedTool,
+                    args: request.planningDecision!.toolArgs ?? {},
+                    confidence: { score: 1, reasoning: ["M17 planner-selected tool"] },
+                  }
+                : null;
+            })()
+          : router(request.prompt);
 
       // If deterministic router has low confidence and hybrid intelligence is enabled, consult the LLM
       if (
-        request.planningDecision?.needsTool !== false &&
+        request.planningDecision === undefined &&
         (!routed || routed.confidence.score < confidenceThresholds.routerMinConfidence) &&
         dependencies.hybridConfig?.enabled
       ) {

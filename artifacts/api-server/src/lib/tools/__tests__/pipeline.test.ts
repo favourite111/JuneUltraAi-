@@ -4,7 +4,7 @@ import {
   createDeterministicAgentRuntime,
   type AgentRuntimeRequest,
 } from "../runtime.js";
-import type { RoutedTool } from "../registry.js";
+import { ToolRegistry, type RoutedTool } from "../registry.js";
 import { MetricsCollector } from "../resilience.js";
 import type {
   AgentEvent,
@@ -242,6 +242,112 @@ describe("Deterministic Agent Runtime Pipeline - Phase 3A Milestone 6", () => {
 
     expect(response.status).toBe("no_capability");
     expect(router).not.toHaveBeenCalled();
+  });
+
+  it("does not invoke an LLM when clarification has already been decided", async () => {
+    const modelProvider = {
+      generate: vi.fn(async () => ({ text: "must not run" })),
+      getMetadata: () => ({ name: "test", models: [] }),
+    };
+    const promptManager = {
+      renderPrompt: vi.fn(() => "must not render"),
+      parseResponse: vi.fn(() => ({
+        type: "no_action" as const,
+        reasoning: "must not parse",
+      })),
+    };
+    const runtime = createDeterministicAgentRuntime({
+      clock: { now: () => 1_700_000_000_000 },
+      idGenerator: { next: () => "clarification-request" },
+      router: vi.fn(() => {
+        throw new Error("router must not run");
+      }),
+      modelProvider,
+      promptManager,
+      hybridConfig: { enabled: true },
+    });
+
+    const response = await runtime.execute({
+      ...request("Book me a flight"),
+      planningDecision: { needsTool: false },
+    });
+
+    expect(response.status).toBe("no_capability");
+    expect(modelProvider.generate).not.toHaveBeenCalled();
+    expect(promptManager.renderPrompt).not.toHaveBeenCalled();
+  });
+
+  it("executes the planner-selected tool instead of a conflicting router result", async () => {
+    const routerTool: Tool = {
+      name: "router-tool",
+      description: "Should not win.",
+      match: () => null,
+      execute: vi.fn(async () => successResult),
+    };
+    const plannedTool: Tool = {
+      name: "planned-tool",
+      description: "Planner authority test tool.",
+      match: () => null,
+      execute: vi.fn(async () => successResult),
+    };
+    const runtime = createDeterministicAgentRuntime({
+      clock: { now: () => 1_700_000_000_000 },
+      idGenerator: {
+        next: (() => {
+          const ids = ["planned-request", "planned-plan", "planned-step"];
+          return () => ids.shift()!;
+        })(),
+      },
+      router: () => routed(routerTool),
+    });
+    ToolRegistry.register(plannedTool);
+
+    const response = await runtime.execute({
+      ...request("Search latest Node.js"),
+      planningDecision: {
+        needsTool: true,
+        toolName: "planned-tool",
+        toolArgs: { query: "Node.js" },
+      },
+    });
+
+    expect(response.status).toBe("completed");
+    expect(plannedTool.execute).toHaveBeenCalledOnce();
+    expect(routerTool.execute).not.toHaveBeenCalled();
+  });
+
+  it("does not fall through to router or LLM when a planned tool is unavailable", async () => {
+    const router = vi.fn(() => {
+      throw new Error("router bypassed planner authority");
+    });
+    const modelProvider = {
+      generate: vi.fn(async () => ({ text: "must not run" })),
+      getMetadata: () => ({ name: "test", models: [] }),
+    };
+    const promptManager = {
+      renderPrompt: vi.fn(() => "must not render"),
+      parseResponse: vi.fn(() => ({
+        type: "no_action" as const,
+        reasoning: "must not parse",
+      })),
+    };
+    const runtime = createDeterministicAgentRuntime({
+      clock: { now: () => 1_700_000_000_000 },
+      idGenerator: { next: () => "missing-tool-request" },
+      router,
+      modelProvider,
+      promptManager,
+      hybridConfig: { enabled: true },
+    });
+
+    const response = await runtime.execute({
+      ...request("Search latest Node.js"),
+      planningDecision: { needsTool: true, toolName: "missing-web-search" },
+    });
+
+    expect(response.status).toBe("no_capability");
+    expect(router).not.toHaveBeenCalled();
+    expect(modelProvider.generate).not.toHaveBeenCalled();
   });
 
   it("replays identical request inputs and dependency streams with the same lifecycle transcript", async () => {

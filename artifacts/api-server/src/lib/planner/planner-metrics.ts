@@ -6,14 +6,28 @@ export interface PlannerMetricsSnapshot {
   readonly average_plan_steps: number;
 }
 
-export class PlannerMetrics {
+export interface PlannerMetricsRecorder {
+  record(result: {
+    needsTool: boolean;
+    needsClarification: boolean;
+    needsMemory: boolean;
+    plan: readonly unknown[];
+  }): void;
+}
+
+export class PlannerMetrics implements PlannerMetricsRecorder {
   private plansCreated = 0;
   private toolPlans = 0;
   private clarificationPlans = 0;
   private memoryPlans = 0;
   private totalPlanSteps = 0;
 
-  record(result: { needsTool: boolean; needsClarification: boolean; needsMemory: boolean; plan: readonly unknown[] }): void {
+  record(result: {
+    needsTool: boolean;
+    needsClarification: boolean;
+    needsMemory: boolean;
+    plan: readonly unknown[];
+  }): void {
     this.plansCreated += 1;
     this.totalPlanSteps += result.plan.length;
     if (result.needsTool) this.toolPlans += 1;

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createAgentPlanner } from "../planner.js";
 import { PlannerMetrics } from "../planner-metrics.js";
 import type { PlanningInput } from "../planner-types.js";
@@ -49,6 +49,25 @@ describe("M17 Agent Planning Engine", () => {
     expect(result.clarificationQuestion).toContain("date");
   });
 
+  it("returns an immutable decision with immutable nested planning data", () => {
+    const result = plan("Book me a flight");
+
+    expect(Object.isFrozen(result)).toBe(true);
+    expect(Object.isFrozen(result.plan)).toBe(true);
+    expect(Object.isFrozen(result.plan[0])).toBe(true);
+    expect(Object.isFrozen(result.missingInformation)).toBe(true);
+  });
+
+  it("selects only the tool plan for mixed search and memory language", () => {
+    const result = plan("Search Google and remember my birthday");
+
+    expect(result.intent).toBe("tool_use");
+    expect(result.needsTool).toBe(true);
+    expect(result.needsMemory).toBe(false);
+    expect(result.needsClarification).toBe(false);
+    expect(result.plan).toHaveLength(1);
+  });
+
   it("creates a two-step teaching plan for explain-then-quiz requests", () => {
     const result = plan("Explain anatomy then test me");
 
@@ -88,5 +107,14 @@ describe("M17 Agent Planning Engine", () => {
       memory_plans: 2,
       average_plan_steps: 1.25,
     });
+  });
+
+  it("increments metrics exactly once per planning call", () => {
+    const record = vi.fn();
+    const planner = createAgentPlanner({ record });
+
+    planner.plan({ ...baseInput, message: "Continue" });
+
+    expect(record).toHaveBeenCalledOnce();
   });
 });
