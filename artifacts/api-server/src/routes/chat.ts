@@ -17,6 +17,7 @@ import { scoreFact } from "../lib/memory/confidence-scorer.js";
 import { isSaneFact } from "../lib/memory/memory-sanity-check.js";
 import { analyzeSession } from "../lib/memory/session-analyzer.js";
 import { agentPlanner, type PlanningResult } from "../lib/planner/index.js";
+import { agentReasoner } from "../lib/reasoner/index.js";
 import { ToolRegistry } from "../lib/tools/registry.js";
 import {
   getOpenTopics,
@@ -957,6 +958,15 @@ async function handleChat(req: Request, res: Response): Promise<void> {
     return;
   }
 
+  // M18 — Reasoning Engine: infers context (expertise, depth, urgency, continuity,
+  // contradictions) from memory before the runtime and prompt builder run.
+  // Contract: read-only — never writes memory, never executes tools.
+  const reasoning = agentReasoner.reason({
+    message: prompt,
+    planningResult: planning,
+    memoryContext,
+  });
+
   const runtimeResponse = await deterministicToolRuntime.execute({
     prompt,
     botId,
@@ -1102,7 +1112,7 @@ async function handleChat(req: Request, res: Response): Promise<void> {
       groupId,
       state,
       factsLine,
-      `${renderPlanningContext(planning)}\n${memCtxBlock}`,
+      `${renderPlanningContext(planning)}\n${reasoning.required ? reasoning.summary + "\n" : ""}${memCtxBlock}`,
     );
 
     const AI_TIMEOUT_MS = 18_000;
