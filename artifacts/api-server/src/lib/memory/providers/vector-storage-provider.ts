@@ -13,9 +13,16 @@ import type { MemoryScope } from "../types.js";
 
 export type VectorMetadata = Readonly<Record<string, unknown>>;
 
+/**
+ * Maintenance view of one vector entry in a scope-isolated derived index.
+ * The vector values themselves are intentionally omitted from inspection.
+ */
 export interface VectorIndexEntry {
+  /** Authoritative KnowledgeRecord.key represented by this vector. */
   readonly sourceId: string;
+  /** Number of dimensions in the stored vector. */
   readonly dimensions: number;
+  /** Lifecycle and source-compatibility metadata retained by the index. */
   readonly metadata: VectorMetadata;
 }
 

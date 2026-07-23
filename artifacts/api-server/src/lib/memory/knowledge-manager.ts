@@ -96,6 +96,7 @@ export interface KnowledgeRelevantOptions extends KnowledgeLoadOptions {
   readonly similarityThreshold?: number;
 }
 
+/** Drift classifications reported by derived knowledge-index reconciliation. */
 export type KnowledgeVectorDrift =
   | "missing-vector"
   | "pending-vector"
@@ -103,24 +104,39 @@ export type KnowledgeVectorDrift =
   | "orphaned-vector"
   | "invalid-vector";
 
+/** Bounded report of detected and repaired vector-index drift for one scope. */
 export interface KnowledgeIndexReport {
+  /** Scope inspected by reconciliation; all entries are scope-isolated. */
   readonly scope: MemoryScope;
+  /** Authoritative records with no corresponding vector. */
   readonly missing: readonly string[];
+  /** Records whose most recent indexing attempt failed in this process. */
   readonly pending: readonly string[];
+  /** Vectors whose source fingerprint no longer matches authoritative storage. */
   readonly stale: readonly string[];
+  /** Vectors with no corresponding authoritative record. */
   readonly orphaned: readonly string[];
+  /** Vectors incompatible with the active schema/provider/model/dimensions. */
   readonly invalid: readonly string[];
+  /** Record keys successfully re-indexed during a non-dry run. */
   readonly repaired: readonly string[];
+  /** Vector source IDs deleted during a non-dry run. */
   readonly deleted: readonly string[];
+  /** Whether this report was produced without modifying the derived index. */
   readonly dryRun: boolean;
 }
 
+/** Scope and execution bounds for a derived-index reconciliation pass. */
 export interface KnowledgeReconcileOptions {
+  /** Scope to inspect and, when repairing, modify only within this boundary. */
   readonly scope: MemoryScope;
+  /** Maximum number of repair/delete operations to attempt. */
   readonly batchSize?: number;
+  /** Report drift without repairing or deleting derived vectors. */
   readonly dryRun?: boolean;
 }
 
+/** Metadata schema version for knowledge vectors. */
 export const KNOWLEDGE_INDEX_SCHEMA_VERSION = 1;
 
 // ---------------------------------------------------------------------------
