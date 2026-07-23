@@ -227,7 +227,10 @@ export type AgentEvent =
   | { type: "memory.budget_truncated";context: ExecutionContext; payload: { removedTiers: MemoryTierId[]; tokensSaved: number; timestamp: number; } }
   | { type: "memory.forgotten";       context: ExecutionContext; payload: { scope: MemoryScope; tiersCleared: MemoryTierId[]; timestamp: number; } }
   | { type: "memory.write_conflict";  context: ExecutionContext; payload: { tier: MemoryTierId; retrying: boolean; timestamp: number; } }
-  | { type: "memory.fact_decayed";    context: ExecutionContext; payload: { factId: string; key: string; finalConfidence: number; timestamp: number; } };
+  | { type: "memory.fact_decayed";    context: ExecutionContext; payload: { factId: string; key: string; finalConfidence: number; timestamp: number; } }
+  | { type: "memory.maintenance_started"; context: ExecutionContext; payload: { timestamp: number; } }
+  | { type: "memory.maintenance_completed"; context: ExecutionContext; payload: { scopeCount: number; sessionsRemoved: number; conversationTurnsPruned: number; toolRecordsPruned: number; timestamp: number; durationMs: number; } }
+  | { type: "memory.maintenance_failed"; context: ExecutionContext; payload: { error: string; timestamp: number; } };
 
 
 /**

@@ -536,9 +536,15 @@ export interface StorageProvider {
   delete(key: StorageKey | ScopePrefix): Promise<void>;
 
   /**
-   * Returns the health status of this storage backend.
+   * Returns the current health status of each storage backend.
    */
   health(): Promise<"ok" | "degraded" | "unavailable">;
+
+  /**
+   * M15-F4: Returns all distinct (botId, userId) pairs that have active memory.
+   * Used by the StoragePruner to perform global background sweeps.
+   */
+  listActiveScopes(): Promise<Array<{ botId: string; userId: string; tenantId: string }>>;
 }
 
 // ---------------------------------------------------------------------------

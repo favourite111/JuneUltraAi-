@@ -337,4 +337,53 @@ export class StoragePruner {
       timestamp: nowMs,
     };
   }
+
+  /**
+   * M15-F4: Global background sweep.
+   * Discovers all active scopes and runs runPrune on each.
+   */
+  async runPruneAll(nowMs: number = Date.now()): Promise<PruneResult & { scopeCount: number; durationMs: number }> {
+    const start = Date.now();
+    const scopes = await this.provider.listActiveScopes();
+    let totalSession = 0;
+    let totalConversation = 0;
+    let totalTool = 0;
+
+    for (const scopeInfo of scopes) {
+      // Reconstruct MemoryScope (requestId is not needed for background pruning)
+      const baseScope: MemoryScope = {
+        ...scopeInfo,
+        requestId: "system-prune-" + nowMs,
+      };
+
+      // M15-F4: Session discovery — for each scope, find all sessions and prune them
+      const sessionKey: StorageKey = { tier: "session", ...scopeInfo };
+      let sessions: SessionMemory[] = [];
+      try {
+        sessions = await this.provider.list<SessionMemory>(sessionKey, { limit: 100, order: "asc" });
+      } catch {
+        // Silently skip if listing fails
+      }
+
+      for (const session of sessions) {
+        const removed = await this.pruneSession({ ...baseScope, sessionId: session.sessionId }, nowMs);
+        if (removed) totalSession++;
+      }
+      
+      const result = await this.runPrune(baseScope, nowMs);
+      // Note: runPrune already handles pruneSession if baseScope.sessionId is present.
+      // Since baseScope.sessionId is undefined here, runPrune will skip session pruning.
+      totalConversation += result.conversationTurnsPruned;
+      totalTool += result.toolRecordsPruned;
+    }
+
+    return {
+      scopeCount: scopes.length,
+      sessionsRemoved: totalSession,
+      conversationTurnsPruned: totalConversation,
+      toolRecordsPruned: totalTool,
+      timestamp: nowMs,
+      durationMs: Date.now() - start,
+    };
+  }
 }

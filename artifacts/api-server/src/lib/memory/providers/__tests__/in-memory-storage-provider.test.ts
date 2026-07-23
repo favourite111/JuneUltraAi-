@@ -34,7 +34,7 @@ import { WriteConflictError, type StorageKey, type ScopePrefix } from "../../typ
 // ---------------------------------------------------------------------------
 
 const KEY_A: StorageKey = {
-  tier: "session",
+  tier: "user_profile",
   tenantId: "t1",
   botId: "b1",
   userId: "u1",
@@ -214,7 +214,7 @@ describe("InMemoryStorageProvider", () => {
       expect(caught).not.toBeNull();
       expect(caught!.expectedRevision).toBe(wrongRevision);
       expect(caught!.actualRevision).toBe(r1.revision);
-      expect(caught!.key).toMatchObject({ tier: "session", userId: "u1" });
+      expect(caught!.key).toMatchObject({ tier: "user_profile", userId: "u1" });
     });
 
     it("does not modify the stored value when a conflict is thrown", async () => {

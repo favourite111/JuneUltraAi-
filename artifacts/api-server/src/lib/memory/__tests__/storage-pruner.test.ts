@@ -187,6 +187,7 @@ function makeFakeProvider(): StorageProvider {
     upsert: vi.fn().mockResolvedValue(FAKE_WRITE_RESULT),
     delete: vi.fn().mockResolvedValue(undefined),
     health: vi.fn().mockResolvedValue("ok"),
+    listActiveScopes: vi.fn().mockResolvedValue([]),
   };
 }
 

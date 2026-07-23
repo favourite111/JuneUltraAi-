@@ -230,6 +230,26 @@ export class InMemoryStorageProvider implements StorageProvider {
   }
 
   async list<T>(key: StorageKey, options: ListOptions): Promise<T[]> {
+    // Milestone 15: Support prefix-based listing for sessions if qualifier is missing
+    if (key.tier === "session" && !key.qualifier) {
+      const prefix = `${key.tier}:${key.tenantId}:${key.botId}:${key.userId}:`;
+      const sessions: T[] = [];
+      for (const [encodedKey, record] of this.store.entries()) {
+        if (encodedKey.startsWith(prefix)) {
+          const active = this.getActive(encodedKey);
+          if (active && active.kind === "single") {
+            sessions.push({
+              ...(active.value as any),
+              sessionId: active.originalKey.qualifier,
+              lastActivityAt: active.updatedAt,
+            } as T);
+          }
+        }
+      }
+      if (options.order === "desc") sessions.reverse();
+      return sessions.slice(0, options.limit);
+    }
+
     const record = this.getActive(encodeKey(key));
     if (!record) return [];
 
@@ -404,6 +424,18 @@ export class InMemoryStorageProvider implements StorageProvider {
 
   async health(): Promise<"ok" | "degraded" | "unavailable"> {
     return "ok";
+  }
+
+  async listActiveScopes(): Promise<Array<{ botId: string; userId: string; tenantId: string }>> {
+    const scopes = new Map<string, { botId: string; userId: string; tenantId: string }>();
+    for (const record of this.store.values()) {
+      const k = record.originalKey;
+      const key = `${k.tenantId}:${k.botId}:${k.userId}`;
+      if (!scopes.has(key)) {
+        scopes.set(key, { botId: k.botId, userId: k.userId, tenantId: k.tenantId });
+      }
+    }
+    return Array.from(scopes.values());
   }
 
   // -------------------------------------------------------------------------

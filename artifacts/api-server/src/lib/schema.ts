@@ -91,6 +91,38 @@ export async function ensureSchema(): Promise<void> {
   await sql`ALTER TABLE pending_topics ADD COLUMN IF NOT EXISTS topic_key  TEXT`;
   await sql`ALTER TABLE pending_topics ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`;
 
+  // M15-F2: Sessions table
+  await sql`
+    CREATE TABLE IF NOT EXISTS sessions (
+      bot_id            TEXT NOT NULL,
+      user_id           TEXT NOT NULL,
+      session_id        TEXT NOT NULL,
+      session_data      JSONB NOT NULL,
+      last_activity_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (bot_id, user_id, session_id)
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_sessions_last_activity ON sessions (last_activity_at)`;
+
+  // M15-F3: Tool executions table
+  await sql`
+    CREATE TABLE IF NOT EXISTS tool_executions (
+      id                BIGSERIAL PRIMARY KEY,
+      bot_id            TEXT NOT NULL,
+      user_id           TEXT NOT NULL,
+      session_id        TEXT NOT NULL,
+      tool_name         TEXT NOT NULL,
+      execution_time    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      success           BOOLEAN NOT NULL,
+      metadata          JSONB NOT NULL DEFAULT '{}',
+      created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_tool_exec_bot_user ON tool_executions (bot_id, user_id)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_tool_exec_session ON tool_executions (session_id)`;
+
   logger.info("Neon schema ready");
 
   startCleanupJob();

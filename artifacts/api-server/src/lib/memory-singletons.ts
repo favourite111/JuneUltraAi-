@@ -103,16 +103,56 @@ export const storagePruner = new StoragePruner(storageProvider, {
 });
 
 /**
- * Milestone 15: Background Scheduler
+ * Milestone 15: Background Scheduler (M15-F1)
  * Runs every 4 hours to clean up expired sessions and prune conversation history.
+ * Only one instance exists as it is part of the singleton module initialization.
  */
-setInterval(async () => {
-  // Note: In a real production environment, this would list all active scopes
-  // from the database. For now, we emit a 'maintenance' event that can be
-  // picked up by the memory metrics collector or logged.
-  memoryEventBus.emit({
-    type: "memory.maintenance_started" as any,
-    context: { requestId: "system-maintenance" } as any,
-    payload: { timestamp: Date.now() },
-  });
-}, 4 * 60 * 60 * 1000);
+async function startPrunerScheduler() {
+  const FOUR_HOURS = 4 * 60 * 60 * 1000;
+  
+  const runPrune = async () => {
+    const now = Date.now();
+    try {
+      // M15-F1: Log pruner start
+      console.log(`[MemoryPruner] Started at ${new Date(now).toISOString()}`);
+      
+      memoryEventBus.emit({
+        type: "memory.maintenance_started",
+        context: { requestId: "system-maintenance" } as any,
+        payload: { timestamp: now },
+      });
+
+      // M15-F4: Perform global sweep
+      const result = await storagePruner.runPruneAll(now);
+
+      // M15-F1: Log pruner completion with stats
+      console.log(`[MemoryPruner] Completed: ${result.scopeCount} scopes scanned, ` +
+                  `${result.sessionsRemoved} sessions removed, ` +
+                  `${result.conversationTurnsPruned} turns pruned, ` +
+                  `${result.toolRecordsPruned} tool records pruned. ` +
+                  `Duration: ${result.durationMs}ms`);
+
+      memoryEventBus.emit({
+        type: "memory.maintenance_completed",
+        context: { requestId: "system-maintenance" } as any,
+        payload: { ...result },
+      });
+    } catch (error) {
+      // M15-F1: Log failures
+      console.error(`[MemoryPruner] Failed:`, error);
+      
+      memoryEventBus.emit({
+        type: "memory.maintenance_failed",
+        context: { requestId: "system-maintenance" } as any,
+        payload: { error: error instanceof Error ? error.message : String(error), timestamp: now },
+      });
+    }
+  };
+
+  // Run once on boot, then every 4 hours
+  void runPrune();
+  setInterval(runPrune, FOUR_HOURS);
+}
+
+// M15-F1: Start the scheduler
+void startPrunerScheduler();

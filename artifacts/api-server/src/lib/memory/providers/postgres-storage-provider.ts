@@ -39,8 +39,13 @@ export class PostgresStorageProvider implements StorageProvider {
 
   async read<T>(key: StorageKey): Promise<T | null> {
     if (key.tier === "session") {
-      // Session is not yet in the DB schema, returning null to allow in-memory fallback
-      return null;
+      const rows = await this.sql`
+        SELECT session_data
+        FROM sessions
+        WHERE bot_id = ${key.botId} AND user_id = ${key.userId} AND session_id = ${key.qualifier ?? 'default'}
+      `;
+      if (rows.length === 0) return null;
+      return rows[0].session_data as T;
     }
 
     if (key.tier === "user_profile") {
@@ -137,12 +142,52 @@ export class PostgresStorageProvider implements StorageProvider {
       return records as T[];
     }
 
+    if (key.tier === "session") {
+      const rows = await this.sql`
+        SELECT session_id, session_data, last_activity_at
+        FROM sessions
+        WHERE bot_id = ${key.botId} AND user_id = ${key.userId}
+        ORDER BY last_activity_at DESC
+        LIMIT ${options.limit ?? 100}
+      `;
+      return rows.map(row => ({
+        ...row.session_data,
+        sessionId: row.session_id,
+        lastActivityAt: row.last_activity_at.getTime()
+      })) as T[];
+    }
+
+    if (key.tier === "tool_execution") {
+      const rows = await this.sql`
+        SELECT tool_name, execution_time, success, metadata
+        FROM tool_executions
+        WHERE bot_id = ${key.botId} AND user_id = ${key.userId}
+        ORDER BY execution_time DESC
+        LIMIT ${options.limit ?? 50}
+      `;
+      return rows.map(row => ({
+        toolName: row.tool_name,
+        executionTime: row.execution_time.getTime(),
+        success: row.success,
+        metadata: row.metadata
+      })) as T[];
+    }
+
     return [];
   }
 
   async write<T>(key: StorageKey, value: T, options?: WriteOptions): Promise<WriteResult> {
-    // Basic implementation for now, focused on session if needed
     const now = new Date();
+    if (key.tier === "session") {
+      const sessionData = JSON.stringify(value);
+      await this.sql`
+        INSERT INTO sessions (bot_id, user_id, session_id, session_data, last_activity_at, updated_at)
+        VALUES (${key.botId}, ${key.userId}, ${key.qualifier ?? 'default'}, ${sessionData}::jsonb, ${now}, ${now})
+        ON CONFLICT (bot_id, user_id, session_id)
+        DO UPDATE SET session_data = ${sessionData}::jsonb, last_activity_at = ${now}, updated_at = NOW()
+      `;
+    }
+    
     return {
       revision: 1,
       etag: "1",
@@ -151,6 +196,7 @@ export class PostgresStorageProvider implements StorageProvider {
   }
 
   async append<T>(key: StorageKey, value: T, options?: WriteOptions): Promise<WriteResult> {
+    const now = new Date();
     if (key.tier === "conversation") {
       const message = value as any;
       await this.sql`
@@ -164,7 +210,14 @@ export class PostgresStorageProvider implements StorageProvider {
       `;
     }
 
-    const now = new Date();
+    if (key.tier === "tool_execution") {
+      const record = value as any;
+      await this.sql`
+        INSERT INTO tool_executions (bot_id, user_id, session_id, tool_name, execution_time, success, metadata)
+        VALUES (${key.botId}, ${key.userId}, ${key.qualifier ?? 'default'}, ${record.toolName}, ${new Date(record.executionTime)}, ${record.success}, ${JSON.stringify(record.metadata)}::jsonb)
+      `;
+    }
+
     return {
       revision: 1,
       etag: "1",
@@ -230,5 +283,21 @@ export class PostgresStorageProvider implements StorageProvider {
     } catch {
       return "unavailable";
     }
+  }
+
+  async listActiveScopes(): Promise<Array<{ botId: string; userId: string; tenantId: string }>> {
+    // Collect all distinct (botId, userId) from tiers that need pruning
+    const rows = await this.sql`
+      SELECT DISTINCT bot_id, user_id FROM conversations
+      UNION
+      SELECT DISTINCT bot_id, user_id FROM sessions
+      UNION
+      SELECT DISTINCT bot_id, user_id FROM tool_executions
+    `;
+    return rows.map(row => ({
+      botId: row.bot_id,
+      userId: row.user_id,
+      tenantId: "default" // PostgresStorageProvider currently defaults to one tenant
+    }));
   }
 }
