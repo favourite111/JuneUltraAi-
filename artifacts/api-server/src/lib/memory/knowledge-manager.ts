@@ -27,6 +27,7 @@ import type {
   StorageProvider,
 } from "./types.js";
 import type { EmbeddingProvider } from "./embedding-provider.js";
+import { tokenise } from "./relevance-scorer.js";
 import type {
   VectorSearchOptions,
   VectorStorageProviderContract,
@@ -224,55 +225,36 @@ export class KnowledgeManager {
     query: string | undefined,
     options: KnowledgeRelevantOptions = {},
   ): Promise<readonly KnowledgeRecord[]> {
-    if (!query || !this.embeddingProvider || !this.vectorStorageProvider) {
+    if (!query) {
       return this.load(scope, options);
     }
 
-    try {
-      const queryVector = await this.embeddingProvider.embed(query);
-      this.validateDimensions(queryVector);
+    // Both branches start together. The deterministic branch is authoritative
+    // and therefore also determines which semantic results can be hydrated.
+    const [deterministicResult, semanticResult] = await Promise.allSettled([
+      this.loadDeterministic(scope, query, options),
+      this.loadSemantic(scope, query, options),
+    ]);
 
-      const vectorOptions: VectorSearchOptions = {
-        limit: options.limit ?? DEFAULT_LOAD_LIMIT,
-        similarityThreshold: options.similarityThreshold,
-      };
-      const matches = await this.vectorStorageProvider.searchVectors(
-        scope,
-        queryVector,
-        vectorOptions,
-      );
-      if (matches.length === 0) return this.load(scope, options);
+    // If authoritative storage failed, vector metadata cannot be returned as
+    // knowledge records. A derived index must never become the source of truth.
+    if (deterministicResult.status !== "fulfilled") return [];
 
-      const records = await this.provider.list<KnowledgeRecord>(this._key(scope), {
-        limit: DEFAULT_LOAD_LIMIT,
-        order: "asc",
-      });
-      const recordsByKey = new Map(records.map((record) => [record.key, record]));
-      const nowMs = this.nowFn();
-      const categories = options.categories ? new Set(options.categories) : undefined;
-      const minConfidence = options.minConfidence ?? 0;
+    const deterministic = deterministicResult.value;
+    const semantic = semanticResult.status === "fulfilled" ? semanticResult.value : [];
+    const seen = new Set(deterministic.map((record) => record.key));
+    const merged = [...deterministic];
 
-      const resolved = matches
-        .map((match) => recordsByKey.get(match.sourceId))
-        .filter((record): record is KnowledgeRecord => record !== undefined)
-        .filter((record) =>
-          options.includeExpired ||
-          record.expiresAt === undefined ||
-          record.expiresAt === null ||
-          record.expiresAt > nowMs,
-        )
-        .filter((record) => categories === undefined || categories.has(record.category))
-        .filter((record) => record.confidence >= minConfidence);
-
-      // A stale index can return IDs that no longer exist in authoritative
-      // storage. Do not make valid knowledge disappear in that state.
-      return resolved.length > 0 ? resolved : this.load(scope, options);
-    } catch {
-      // Vectors are a derived retrieval index; storage remains authoritative.
-      // Degrade to deterministic storage loading when embedding or vector I/O
-      // is unavailable, while preserving the existing load contract.
-      return this.load(scope, options);
+    // VectorStorageProvider already returns semantic candidates in descending
+    // score order. Semantic ordering is used only for semantic-only records.
+    for (const record of semantic) {
+      if (!seen.has(record.key)) {
+        seen.add(record.key);
+        merged.push(record);
+      }
     }
+
+    return merged.slice(0, options.limit ?? DEFAULT_LOAD_LIMIT);
   }
 
   // ---------------------------------------------------------------------------
@@ -389,6 +371,113 @@ export class KnowledgeManager {
     };
   }
 
+  /**
+   * Deterministic retrieval branch.
+   *
+   * Exact key matches outrank exact value/phrase matches, which outrank
+   * deterministic token matches. Importance × confidence is only a
+   * tie-breaker inside the same deterministic class.
+   */
+  private async loadDeterministic(
+    scope: MemoryScope,
+    query: string,
+    options: KnowledgeRelevantOptions,
+  ): Promise<readonly KnowledgeRecord[]> {
+    const records = await this.loadFiltered(scope, options);
+    const normalizedQuery = normalizeText(query);
+    const queryTokens = tokenise(query);
+
+    if (!normalizedQuery || queryTokens.size === 0) return [];
+
+    const candidates = records.flatMap((record, insertionIndex) => {
+      const key = normalizeText(record.key);
+      const value = normalizeText(record.value);
+      const exactKey = key === normalizedQuery;
+      const exactValue = value.includes(normalizedQuery);
+      const recordTokens = tokenise(`${record.key} ${record.value}`);
+      let overlap = 0;
+      for (const token of queryTokens) {
+        if (recordTokens.has(token)) overlap += 1;
+      }
+
+      if (!exactKey && !exactValue && overlap === 0) return [];
+
+      return [{
+        record,
+        matchClass: exactKey ? 0 : exactValue ? 1 : 2,
+        overlap,
+        weight: record.importance * record.confidence,
+        insertionIndex,
+      }];
+    });
+
+    candidates.sort((left, right) =>
+      left.matchClass - right.matchClass ||
+      right.overlap - left.overlap ||
+      right.weight - left.weight ||
+      left.insertionIndex - right.insertionIndex,
+    );
+
+    return candidates
+      .slice(0, options.limit ?? DEFAULT_LOAD_LIMIT)
+      .map(({ record }) => record);
+  }
+
+  /**
+   * Semantic retrieval branch. It returns authoritative records in vector
+   * score order and returns no results when the derived branch is unavailable.
+   */
+  private async loadSemantic(
+    scope: MemoryScope,
+    query: string,
+    options: KnowledgeRelevantOptions,
+  ): Promise<readonly KnowledgeRecord[]> {
+    if (!this.embeddingProvider || !this.vectorStorageProvider) return [];
+
+    const queryVector = await this.embeddingProvider.embed(query);
+    this.validateDimensions(queryVector);
+
+    const vectorOptions: VectorSearchOptions = {
+      limit: options.limit ?? DEFAULT_LOAD_LIMIT,
+      similarityThreshold: options.similarityThreshold,
+    };
+    const matches = await this.vectorStorageProvider.searchVectors(
+      scope,
+      queryVector,
+      vectorOptions,
+    );
+    if (matches.length === 0) return [];
+
+    const records = await this.loadFiltered(scope, options);
+    const recordsByKey = new Map(records.map((record) => [record.key, record]));
+
+    return matches
+      .map((match) => recordsByKey.get(match.sourceId))
+      .filter((record): record is KnowledgeRecord => record !== undefined);
+  }
+
+  private async loadFiltered(
+    scope: MemoryScope,
+    options: KnowledgeLoadOptions,
+  ): Promise<KnowledgeRecord[]> {
+    const raw = await this.provider.list<KnowledgeRecord>(this._key(scope), {
+      limit: DEFAULT_LOAD_LIMIT,
+      order: "asc",
+    });
+    const nowMs = this.nowFn();
+    const categories = options.categories ? new Set(options.categories) : undefined;
+    const minConfidence = options.minConfidence ?? 0;
+
+    return raw.filter((record) =>
+      (options.includeExpired ||
+        record.expiresAt === undefined ||
+        record.expiresAt === null ||
+        record.expiresAt > nowMs) &&
+      (categories === undefined || categories.has(record.category)) &&
+      record.confidence >= minConfidence,
+    );
+  }
+
   private embeddingText(record: KnowledgeRecord): string {
     return `${record.key} ${record.value}`;
   }
@@ -412,4 +501,8 @@ export class KnowledgeManager {
     }
     return (hash >>> 0).toString(16).padStart(8, "0");
   }
+}
+
+function normalizeText(value: string): string {
+  return value.trim().toLowerCase().replace(/\s+/g, " ");
 }

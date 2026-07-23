@@ -287,7 +287,8 @@ export class DefaultMemoryManager implements MemoryManager {
         .filter((f) => !f.decayed)
         .sort((a, b) => b.importance * b.confidence - a.importance * a.confidence);
 
-      // Knowledge records: exclude expired; sort by importance × confidence descending.
+      // KnowledgeManager owns knowledge retrieval ordering. MemoryManager only
+      // assembles the already-ordered records into the context snapshot.
       const knowledgeNowMs = Date.now();
       const knowledgeRecords: KnowledgeRecord[] = (rawKnowledge ?? [])
         .filter(
@@ -296,7 +297,6 @@ export class DefaultMemoryManager implements MemoryManager {
             r.expiresAt === null ||
             r.expiresAt > knowledgeNowMs,
         )
-        .sort((a, b) => b.importance * b.confidence - a.importance * a.confidence);
 
       // Tool summary: extract from the most recent record, if any.
       const toolSummary: string | null =

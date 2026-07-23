@@ -21,6 +21,7 @@ import {
   type StorageProvider,
   type WriteResult,
 } from "../types.js";
+import type { VectorStorageProviderContract } from "../providers/vector-storage-provider.js";
 
 const SCOPE: MemoryScope = {
   tenantId: "tenant",
@@ -70,6 +71,42 @@ function fakeStorage(): StorageProvider {
 }
 
 describe("KnowledgeManager provider orchestration", () => {
+  it("starts deterministic and semantic retrieval in parallel", async () => {
+    let resolveRecords!: (records: KnowledgeRecord[]) => void;
+    const recordsReady = new Promise<KnowledgeRecord[]>((resolve) => {
+      resolveRecords = resolve;
+    });
+    const storage = fakeStorage();
+    (storage.list as ReturnType<typeof vi.fn>).mockReturnValue(recordsReady);
+    const searchVectors = vi.fn().mockResolvedValue([]);
+    const embed = vi.fn().mockResolvedValue([1, 0]);
+    const manager = new KnowledgeManager(storage, {
+      embeddingProvider: { dimensions: 2, embed },
+      vectorStorageProvider: {
+        upsertVector: vi.fn(),
+        searchVectors,
+        deleteVector: vi.fn(),
+        deleteScope: vi.fn(),
+      },
+    });
+
+    const retrieval = manager.loadRelevant(SCOPE, "parallel query");
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // The deterministic branch is waiting on authoritative storage while the
+    // semantic branch has already embedded and searched its derived index.
+    expect(embed).toHaveBeenCalledWith("parallel query");
+    expect(searchVectors).toHaveBeenCalledWith(
+      SCOPE,
+      [1, 0],
+      expect.objectContaining({ limit: 200 }),
+    );
+
+    resolveRecords([]);
+    await expect(retrieval).resolves.toEqual([]);
+  });
+
   it("generates embeddings through injection and stores vectors separately", async () => {
     const storage = new InMemoryStorageProvider();
     const vectorStorage = new VectorStorageProvider();
@@ -176,8 +213,132 @@ describe("KnowledgeManager provider orchestration", () => {
       makeRecord("legacy", "written before vector indexing"),
     );
 
-    const results = await manager.loadRelevant(SCOPE, "vector query");
+    const results = await manager.loadRelevant(SCOPE, "legacy");
     expect(results).toEqual([expect.objectContaining({ key: "legacy" })]);
+  });
+
+  it("falls back to deterministic matches when vector search fails", async () => {
+    const storage = new InMemoryStorageProvider();
+    const manager = new KnowledgeManager(storage, {
+      embeddingProvider: {
+        dimensions: 2,
+        embed: vi.fn().mockResolvedValue([1, 0]),
+      },
+      vectorStorageProvider: {
+        upsertVector: vi.fn(),
+        searchVectors: vi.fn().mockRejectedValue(new Error("vector unavailable")),
+        deleteVector: vi.fn(),
+        deleteScope: vi.fn(),
+      },
+    });
+
+    await storage.upsert(
+      {
+        tier: "long_term_knowledge",
+        tenantId: SCOPE.tenantId,
+        botId: SCOPE.botId,
+        userId: SCOPE.userId,
+      },
+      "exact",
+      makeRecord("exact", "exact fallback match"),
+    );
+
+    const results = await manager.loadRelevant(SCOPE, "exact");
+    expect(results.map((record) => record.key)).toEqual(["exact"]);
+  });
+
+  it("runs deterministic and semantic retrieval together, with deterministic results first", async () => {
+    const storage = new InMemoryStorageProvider();
+    const vectors: VectorStorageProviderContract = {
+      upsertVector: vi.fn(),
+      searchVectors: vi.fn().mockResolvedValue([
+        { sourceId: "semantic-only", score: 0.99, metadata: {} },
+        { sourceId: "exact-key", score: 0.98, metadata: {} },
+      ]),
+      deleteVector: vi.fn(),
+      deleteScope: vi.fn(),
+    };
+    const embeddingProvider = {
+      dimensions: 2,
+      embed: vi.fn().mockResolvedValue([1, 0]),
+    };
+    const manager = new KnowledgeManager(storage, {
+      embeddingProvider,
+      vectorStorageProvider: vectors,
+    });
+
+    await storage.upsert(
+      {
+        tier: "long_term_knowledge",
+        tenantId: SCOPE.tenantId,
+        botId: SCOPE.botId,
+        userId: SCOPE.userId,
+      },
+      "exact-key",
+      makeRecord("exact-key", "low importance exact match", { importance: 0.1 }),
+    );
+    await storage.upsert(
+      {
+        tier: "long_term_knowledge",
+        tenantId: SCOPE.tenantId,
+        botId: SCOPE.botId,
+        userId: SCOPE.userId,
+      },
+      "semantic-only",
+      makeRecord("semantic-only", "unrelated record", { importance: 0.99 }),
+    );
+
+    const results = await manager.loadRelevant(SCOPE, "exact-key");
+
+    expect(results.map((record) => record.key)).toEqual(["exact-key", "semantic-only"]);
+    expect(vectors.searchVectors).toHaveBeenCalledWith(
+      SCOPE,
+      [1, 0],
+      expect.objectContaining({ limit: 200 }),
+    );
+  });
+
+  it("deduplicates records found by both branches and preserves semantic-only order", async () => {
+    const storage = new InMemoryStorageProvider();
+    const vectors: VectorStorageProviderContract = {
+      upsertVector: vi.fn(),
+      searchVectors: vi.fn().mockResolvedValue([
+        { sourceId: "semantic-b", score: 0.8, metadata: {} },
+        { sourceId: "shared", score: 0.7, metadata: {} },
+        { sourceId: "semantic-a", score: 0.6, metadata: {} },
+      ]),
+      deleteVector: vi.fn(),
+      deleteScope: vi.fn(),
+    };
+    const manager = new KnowledgeManager(storage, {
+      embeddingProvider: {
+        dimensions: 2,
+        embed: vi.fn().mockResolvedValue([1, 0]),
+      },
+      vectorStorageProvider: vectors,
+    });
+
+    for (const key of ["shared", "semantic-a", "semantic-b"]) {
+      await storage.upsert(
+        {
+          tier: "long_term_knowledge",
+          tenantId: SCOPE.tenantId,
+          botId: SCOPE.botId,
+          userId: SCOPE.userId,
+        },
+        key,
+        makeRecord(key, key === "shared" ? "shared exact" : "unrelated"),
+      );
+    }
+
+    const results = await manager.loadRelevant(SCOPE, "shared");
+
+    expect(results.map((record) => record.key)).toEqual([
+      "shared",
+      "semantic-b",
+      "semantic-a",
+    ]);
+    expect(new Set(results.map((record) => record.key)).size).toBe(results.length);
   });
 });
 
@@ -203,6 +364,58 @@ describe("DefaultMemoryManager knowledge boundary", () => {
     );
 
     expect(context.knowledgeRecords[0]?.key).toBe("project");
+  });
+
+  it("preserves KnowledgeManager ordering instead of applying its own ranking", async () => {
+    const storage = new InMemoryStorageProvider();
+    const vectors = new VectorStorageProvider();
+    const knowledgeManager = new KnowledgeManager(storage, {
+      embeddingProvider: {
+        dimensions: 2,
+        embed: vi.fn().mockResolvedValue([1, 0]),
+      },
+      vectorStorageProvider: vectors,
+    });
+    const memoryManager = new DefaultMemoryManager(
+      storage,
+      undefined,
+      undefined,
+      undefined,
+      knowledgeManager,
+    );
+
+    await storage.upsert(
+      {
+        tier: "long_term_knowledge",
+        tenantId: SCOPE.tenantId,
+        botId: SCOPE.botId,
+        userId: SCOPE.userId,
+      },
+      "exact",
+      makeRecord("exact", "exact query", { importance: 0.01 }),
+    );
+    await storage.upsert(
+      {
+        tier: "long_term_knowledge",
+        tenantId: SCOPE.tenantId,
+        botId: SCOPE.botId,
+        userId: SCOPE.userId,
+      },
+      "semantic",
+      makeRecord("semantic", "related record", { importance: 0.99 }),
+    );
+    await vectors.upsertVector(SCOPE, "exact", [0, 1]);
+    await vectors.upsertVector(SCOPE, "semantic", [1, 0]);
+
+    const context = await memoryManager.load(
+      { ...SCOPE, queryHint: "exact" },
+      DEFAULT_CONTEXT_BUDGET,
+    );
+
+    expect(context.knowledgeRecords.map((record) => record.key)).toEqual([
+      "exact",
+      "semantic",
+    ]);
   });
 
   it("does not pass semantic query text to generic StorageProvider", async () => {
