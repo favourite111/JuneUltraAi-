@@ -1029,8 +1029,6 @@ async function handleChat(req: Request, res: Response): Promise<void> {
       scope:                 { tenantId: memoryScope.tenantId, botId: memoryScope.botId },
       toolName:              tool.name,
       success:               true,
-      // Note: executionTimeMs is not yet exposed by the runtime adapter response,
-      // so we pass undefined to avoid recording a poisoned zero measurement.
       durationMs:            (runtimeResponse as any).context.executionTimeMs ?? undefined,
       confidenceAtSelection: toolIntelResult.confidence,
       executedAt:            Date.now(),

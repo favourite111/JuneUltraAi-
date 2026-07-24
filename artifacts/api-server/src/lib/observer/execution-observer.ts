@@ -25,6 +25,7 @@
 import { makeObservationResult, failedObservationResult, successObservationResult } from "./observation-result.js";
 import { observerMetrics, type ObserverMetricsRecorder } from "./observer-metrics.js";
 import type { ObservationInput, ObservationResult, ObservationStore } from "./observer-types.js";
+import type { ReflectionLayer } from "../reflection/reflection-types.js";
 
 // ---------------------------------------------------------------------------
 // Config
@@ -36,6 +37,10 @@ export interface ExecutionObserverConfig {
    * a record() method matching ObservationStore). Injected for testability.
    */
   readonly store: ObservationStore;
+  /**
+   * M23 — The Reflection Layer (read-only analysis).
+   */
+  readonly reflection?: ReflectionLayer;
   /**
    * Injectable metrics recorder — defaults to the module singleton.
    * Counters only. No decision logic permitted here.
@@ -67,7 +72,7 @@ export interface ExecutionObserver {
 // ---------------------------------------------------------------------------
 
 export function createExecutionObserver(config: ExecutionObserverConfig): ExecutionObserver {
-  const { store } = config;
+  const { store, reflection } = config;
   const metrics   = config.metrics ?? observerMetrics;
 
   return {
@@ -106,6 +111,19 @@ export function createExecutionObserver(config: ExecutionObserverConfig): Execut
         // ---- 5. Record metrics (counters only — no decisions) ----------
         const result = successObservationResult({ durationMs, confidenceAtSelection }, storedAt);
         metrics.record({ recorded: true, durationMs });
+
+        // ---- 6. M23 — Reflection Layer (post-observation, non-blocking) ---
+        if (reflection) {
+          void reflection.reflect({
+            scope:                 input.scope,
+            toolName:              input.toolName,
+            success:               input.success,
+            durationMs,
+            confidenceAtSelection,
+            executedAt:            input.executedAt,
+          });
+        }
+
         return result;
 
       } catch (err: unknown) {
@@ -131,9 +149,10 @@ export function createExecutionObserver(config: ExecutionObserverConfig): Execut
 
 // Lazy import to avoid circular dependency at module evaluation time.
 // The singleton is only used in production (chat.ts); tests inject their own.
-import { toolLearningStore } from "../memory-singletons.js";
+import { toolLearningStore, reflectionLayer } from "../memory-singletons.js";
 
 export const executionObserver = createExecutionObserver({
-  store:   toolLearningStore,
-  metrics: observerMetrics,
+  store:      toolLearningStore,
+  reflection: reflectionLayer,
+  metrics:    observerMetrics,
 });

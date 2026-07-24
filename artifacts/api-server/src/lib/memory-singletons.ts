@@ -25,6 +25,7 @@ import {
   VectorStorageProvider,
 } from "./memory/index.js";
 import { ToolLearningStore, toolLearningMetrics } from "./tool-learning/index.js";
+import { reflectionLayer, reflectionMetrics } from "./reflection/index.js";
 
 // ---------------------------------------------------------------------------
 // Event bus — persistent, shared across all requests
@@ -174,4 +175,4 @@ export const toolLearningStore = new ToolLearningStore(storageProvider, {
   metrics: toolLearningMetrics,
 });
 
-export { toolLearningMetrics };
+export { toolLearningMetrics, reflectionLayer, reflectionMetrics };
