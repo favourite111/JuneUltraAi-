@@ -11,7 +11,7 @@ import {
   type MemoryScope,
   type UserFact as MemoryUserFact,
 } from "../lib/memory/index.js";
-import { memoryManager, toolLearningStore } from "../lib/memory-singletons.js";
+import { memoryManager, toolLearningStore, memoryReader } from "../lib/memory-singletons.js";
 import { extractKnowledge } from "../lib/memory/knowledge-extractor.js";
 import { scoreFact } from "../lib/memory/confidence-scorer.js";
 import { isSaneFact } from "../lib/memory/memory-sanity-check.js";
@@ -937,10 +937,24 @@ async function handleChat(req: Request, res: Response): Promise<void> {
     queryHint: prompt,
   };
   const memoryContext = await memoryManager.load(memoryScope, DEFAULT_CONTEXT_BUDGET);
+
+  // M24 — MemoryReader: focused, query-ranked knowledge for the Planner.
+  // Advisory only — Planner always makes the final decision. Non-fatal if it fails.
+  let memoryReaderRecords: typeof memoryContext.knowledgeRecords = [];
+  try {
+    const memoryReaderResult = await memoryReader.read(memoryScope, prompt);
+    // Merge with existing knowledge, deduplicating by key so the Planner
+    // sees each record only once.
+    const existingKeys = new Set(memoryContext.knowledgeRecords.map((r) => r.key));
+    memoryReaderRecords = memoryReaderResult.records.filter((r) => !existingKeys.has(r.key));
+  } catch {
+    // Non-fatal — proceed with existing memoryContext.knowledgeRecords only.
+  }
+
   const planning = agentPlanner.plan({
     message: prompt,
     sessionContext: memoryContext.session,
-    knowledge: memoryContext.knowledgeRecords,
+    knowledge: [...memoryContext.knowledgeRecords, ...memoryReaderRecords],
     availableTools: ToolRegistry.listTools().map((tool) => ({
       name: tool.name,
       description: tool.description,
@@ -1025,6 +1039,7 @@ async function handleChat(req: Request, res: Response): Promise<void> {
 
     // M22 — Execution Observer: post-execution recording (non-blocking).
     // Replaces direct M21 toolLearningStore.record() calls.
+    // memoryScope is passed for M24 Memory Evolution (requires userId).
     void executionObserver.observe({
       executionId:           runtimeResponse.executionId,
       scope:                 { tenantId: memoryScope.tenantId, botId: memoryScope.botId },
@@ -1033,6 +1048,7 @@ async function handleChat(req: Request, res: Response): Promise<void> {
       durationMs:            runtimeResponse.executionTimeMs,
       confidenceAtSelection: toolIntelResult.confidence,
       executedAt:            Date.now(),
+      memoryScope,
     });
 
     const newMessages: Message[] = [
@@ -1076,6 +1092,7 @@ async function handleChat(req: Request, res: Response): Promise<void> {
 
   if (runtimeResponse.status === "failed") {
     // M22 — Execution Observer: record failed execution (non-blocking).
+    // memoryScope is passed for M24 Memory Evolution (requires userId).
     void executionObserver.observe({
       executionId:           runtimeResponse.executionId,
       scope:                 { tenantId: memoryScope.tenantId, botId: memoryScope.botId },
@@ -1084,6 +1101,7 @@ async function handleChat(req: Request, res: Response): Promise<void> {
       durationMs:            runtimeResponse.executionTimeMs,
       confidenceAtSelection: toolIntelResult.confidence,
       executedAt:            Date.now(),
+      memoryScope,
     });
 
     req.log.error(

@@ -26,6 +26,7 @@ import { makeObservationResult, failedObservationResult, successObservationResul
 import { observerMetrics, type ObserverMetricsRecorder } from "./observer-metrics.js";
 import type { ObservationInput, ObservationResult, ObservationStore } from "./observer-types.js";
 import type { ReflectionLayer } from "../reflection/reflection-types.js";
+import type { MemoryEvolutionLayer } from "../memory-evolution/memory-evolution-types.js";
 
 // ---------------------------------------------------------------------------
 // Config
@@ -39,8 +40,20 @@ export interface ExecutionObserverConfig {
   readonly store: ObservationStore;
   /**
    * M23 — The Reflection Layer (read-only analysis).
+   *
+   * ARCHITECTURAL INVARIANT: Reflection MUST remain CPU-only (no network
+   * calls, no database writes). If Reflection ever performs I/O, revert the
+   * await inside observe() back to a void fire-and-forget call to preserve
+   * the observer's non-blocking guarantee.
    */
   readonly reflection?: ReflectionLayer;
+  /**
+   * M24 — The Memory Evolution Layer.
+   * Called after M23 Reflection with the ReflectionResult to evolve
+   * long-term knowledge. Always invoked fire-and-forget. Requires
+   * ObservationInput.memoryScope to be set; silently skipped otherwise.
+   */
+  readonly memoryEvolution?: MemoryEvolutionLayer;
   /**
    * Injectable metrics recorder — defaults to the module singleton.
    * Counters only. No decision logic permitted here.
@@ -72,7 +85,7 @@ export interface ExecutionObserver {
 // ---------------------------------------------------------------------------
 
 export function createExecutionObserver(config: ExecutionObserverConfig): ExecutionObserver {
-  const { store, reflection } = config;
+  const { store, reflection, memoryEvolution } = config;
   const metrics   = config.metrics ?? observerMetrics;
 
   return {
@@ -113,16 +126,35 @@ export function createExecutionObserver(config: ExecutionObserverConfig): Execut
         const result = successObservationResult({ durationMs, confidenceAtSelection }, storedAt);
         metrics.record({ recorded: true, durationMs });
 
-        // ---- 6. M23 — Reflection Layer (post-observation, non-blocking) ---
-        if (reflection) {
-          void reflection.reflect({
-            executionId:           input.executionId,
-            scope:                 input.scope,
-            toolName:              input.toolName,
-            success:               input.success,
-            durationMs,
-            confidenceAtSelection,
-            executedAt:            input.executedAt,
+        // ---- 6. M23 — Reflection Layer -----------------------------------
+        //
+        // ARCHITECTURAL INVARIANT: Reflection is awaited here because it is
+        // a CPU-only pure computation (no I/O, no network, no DB writes).
+        // If Reflection ever acquires I/O, revert this to `void reflect(...)`
+        // fire-and-forget to preserve the observer's non-blocking contract.
+        //
+        // This await is safe because observe() itself is called fire-and-forget
+        // from chat.ts — the user response is never blocked by this path.
+        const reflectionResult = reflection
+          ? await reflection.reflect({
+              executionId:           input.executionId,
+              scope:                 input.scope,
+              toolName:              input.toolName,
+              success:               input.success,
+              durationMs,
+              confidenceAtSelection,
+              executedAt:            input.executedAt,
+            })
+          : null;
+
+        // ---- 7. M24 — Memory Evolution (fire-and-forget) -----------------
+        // Requires ObservationInput.memoryScope (includes userId).
+        // Silently skipped when either the engine or the scope is absent.
+        if (memoryEvolution && reflectionResult && input.memoryScope) {
+          void memoryEvolution.evolve({
+            scope:            input.memoryScope,
+            toolName:         input.toolName,
+            reflectionResult,
           });
         }
 
@@ -151,10 +183,11 @@ export function createExecutionObserver(config: ExecutionObserverConfig): Execut
 
 // Lazy import to avoid circular dependency at module evaluation time.
 // The singleton is only used in production (chat.ts); tests inject their own.
-import { toolLearningStore, reflectionLayer } from "../memory-singletons.js";
+import { toolLearningStore, reflectionLayer, memoryEvolutionEngine } from "../memory-singletons.js";
 
 export const executionObserver = createExecutionObserver({
-  store:      toolLearningStore,
-  reflection: reflectionLayer,
-  metrics:    observerMetrics,
+  store:           toolLearningStore,
+  reflection:      reflectionLayer,
+  memoryEvolution: memoryEvolutionEngine,
+  metrics:         observerMetrics,
 });

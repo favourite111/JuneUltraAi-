@@ -26,6 +26,13 @@ import {
 } from "./memory/index.js";
 import { ToolLearningStore, toolLearningMetrics } from "./tool-learning/index.js";
 import { reflectionLayer, reflectionMetrics } from "./reflection/index.js";
+import {
+  createKnowledgeReader,
+  createMemoryEvolutionEngine,
+  createMemoryPolicy,
+  createMemoryReader,
+  memoryEvolutionMetrics,
+} from "./memory-evolution/index.js";
 
 // ---------------------------------------------------------------------------
 // Event bus — persistent, shared across all requests
@@ -176,3 +183,43 @@ export const toolLearningStore = new ToolLearningStore(storageProvider, {
 });
 
 export { toolLearningMetrics, reflectionLayer, reflectionMetrics };
+
+// ---------------------------------------------------------------------------
+// M24 — Memory Evolution (post-reflection knowledge persistence)
+// ---------------------------------------------------------------------------
+
+/**
+ * KnowledgeReader — loads existing records by key for MemoryPolicy.
+ * Uses the same knowledgeManager instance (structural typing).
+ */
+export const knowledgeReader = createKnowledgeReader(knowledgeManager);
+
+/**
+ * MemoryPolicy — pure decision engine.
+ * Receives (candidate, existingMemory) — never queries storage directly.
+ */
+export const memoryPolicy = createMemoryPolicy();
+
+/**
+ * MemoryEvolutionEngine — orchestrates the full evolution pipeline:
+ *   ConfidenceFilter → CandidateExtractor → KnowledgeReader → MemoryPolicy → KnowledgeManager
+ *
+ * Injected into ExecutionObserver via memory-evolution optional slot.
+ * Called fire-and-forget; never affects the user response path.
+ */
+export const memoryEvolutionEngine = createMemoryEvolutionEngine({
+  policy:  memoryPolicy,
+  reader:  knowledgeReader,
+  store:   knowledgeManager,
+  metrics: memoryEvolutionMetrics,
+});
+
+/**
+ * MemoryReader — pre-planning advisory read.
+ * Wraps KnowledgeManager.loadRelevant() to provide a focused,
+ * query-ranked knowledge view to the Planner before intent detection.
+ * Memory informs; Planner always decides.
+ */
+export const memoryReader = createMemoryReader(knowledgeManager);
+
+export { memoryEvolutionMetrics };

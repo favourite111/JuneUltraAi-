@@ -22,6 +22,7 @@ import type {
   CompletedToolExecution,
   ToolLearningScope,
 } from "../tool-learning/tool-learning-types.js";
+import type { MemoryScope } from "../memory/types.js";
 
 // Re-export for convenience — observers build these, not callers.
 export type { CompletedToolExecution, ToolLearningScope };
@@ -73,6 +74,17 @@ export interface ObservationInput {
   readonly confidenceAtSelection: number;
   /** Epoch milliseconds when the execution completed. */
   readonly executedAt: number;
+  /**
+   * M24 — Full user scope for MemoryEvolution.
+   *
+   * Optional. When present, the Observer will invoke the MemoryEvolutionEngine
+   * after M23 Reflection, passing this scope to read/write per-user
+   * KnowledgeRecords. Without this field, Memory Evolution is skipped silently.
+   *
+   * Includes userId (not present on ObservationScope) so that KnowledgeManager
+   * can isolate reads/writes per user.
+   */
+  readonly memoryScope?: MemoryScope;
 }
 
 // ---------------------------------------------------------------------------
