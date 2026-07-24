@@ -35,12 +35,12 @@ export function makeObservationResult(result: ObservationResult): ObservationRes
  * or catches an internal error. storedAt defaults to Date.now() at call time.
  */
 export function failedObservationResult(
-  input: { durationMs: number; confidenceAtSelection: number },
+  input: { durationMs?: number; confidenceAtSelection: number },
   storedAt = Date.now(),
 ): ObservationResult {
   return makeObservationResult({
     recorded:             false,
-    durationMs:           Math.max(0, input.durationMs),
+    durationMs:           input.durationMs !== undefined ? Math.max(0, input.durationMs) : 0,
     confidenceAtSelection: Math.min(1, Math.max(0, input.confidenceAtSelection)),
     storedAt,
   });

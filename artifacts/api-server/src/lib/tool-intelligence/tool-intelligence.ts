@@ -218,4 +218,8 @@ export function createToolIntelligenceLayer(
 // Default singleton — used by chat.ts / orchestrator integration
 // ---------------------------------------------------------------------------
 
-export const toolIntelligenceLayer = createToolIntelligenceLayer();
+import { toolLearningStore } from "../memory-singletons.js";
+
+export const toolIntelligenceLayer = createToolIntelligenceLayer({
+  learningReader: toolLearningStore,
+});

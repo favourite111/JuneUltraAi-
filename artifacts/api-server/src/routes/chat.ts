@@ -19,6 +19,7 @@ import { analyzeSession } from "../lib/memory/session-analyzer.js";
 import { agentPlanner, type PlanningResult } from "../lib/planner/index.js";
 import { agentReasoner } from "../lib/reasoner/index.js";
 import { toolIntelligenceLayer, noToolResult } from "../lib/tool-intelligence/index.js";
+import { executionObserver } from "../lib/observer/index.js";
 import { ToolRegistry } from "../lib/tools/registry.js";
 import {
   getOpenTopics,
@@ -968,6 +969,17 @@ async function handleChat(req: Request, res: Response): Promise<void> {
     memoryContext,
   });
 
+  // M20 — Tool Intelligence: pre-execution analysis.
+  const toolIntelResult = planning.needsTool
+    ? toolIntelligenceLayer.evaluate({
+        toolName:      planning.toolName,
+        toolArgs:      planning.toolArgs,
+        prompt,
+        needsTool:     planning.needsTool,
+        learningScope: { tenantId: memoryScope.tenantId, botId: memoryScope.botId },
+      })
+    : noToolResult();
+
   const runtimeResponse = await deterministicToolRuntime.execute({
     prompt,
     botId,
@@ -997,6 +1009,8 @@ async function handleChat(req: Request, res: Response): Promise<void> {
     },
     // M18 — pass the advisory ReasoningResult through to the Orchestrator.
     reasoningResult: reasoning,
+    // M20 — pass the ToolIntelligenceResult through to the Orchestrator.
+    toolIntelligenceResult: toolIntelResult,
     eventBus,
     logger: req.log,
     metrics: {
@@ -1009,19 +1023,18 @@ async function handleChat(req: Request, res: Response): Promise<void> {
     const { result, tool } = runtimeResponse;
     const now = Math.floor(Date.now() / 1000);
 
-    // M21 — post-execution learning record (best-effort, non-blocking).
-    // Determinism contract: record() is called AFTER execution completes.
-    // Stats written here become visible to M20.evaluate() from N+1 onward.
-    void toolLearningStore.record(
-      { tenantId: memoryScope.tenantId, botId: memoryScope.botId },
-      {
-        toolName:              tool.name,
-        success:               true,
-        durationMs:            0, // wall-clock not yet exposed at runtime boundary
-        confidenceAtSelection: 0, // M20 not yet consulted pre-execution in this path
-        executedAt:            Date.now(),
-      },
-    );
+    // M22 — Execution Observer: post-execution recording (non-blocking).
+    // Replaces direct M21 toolLearningStore.record() calls.
+    void executionObserver.observe({
+      scope:                 { tenantId: memoryScope.tenantId, botId: memoryScope.botId },
+      toolName:              tool.name,
+      success:               true,
+      // Note: executionTimeMs is not yet exposed by the runtime adapter response,
+      // so we pass undefined to avoid recording a poisoned zero measurement.
+      durationMs:            (runtimeResponse as any).context.executionTimeMs ?? undefined,
+      confidenceAtSelection: toolIntelResult.confidence,
+      executedAt:            Date.now(),
+    });
 
     const newMessages: Message[] = [
       { role: "user", speaker: userId, content: prompt, ts: now },
@@ -1051,23 +1064,27 @@ async function handleChat(req: Request, res: Response): Promise<void> {
       reply: result.reply,
       data: result.data,
       planning,
+      tool_intelligence: {
+        confidence:         toolIntelResult.confidence,
+        fallbacks:          toolIntelResult.fallbackCandidates,
+        availability:       toolIntelResult.availability,
+        conflicts:          toolIntelResult.conflicts.length,
+      },
       conversationKey: convKey,
     });
     return;
   }
 
   if (runtimeResponse.status === "failed") {
-    // M21 — record failed execution (best-effort, non-blocking).
-    void toolLearningStore.record(
-      { tenantId: memoryScope.tenantId, botId: memoryScope.botId },
-      {
-        toolName:              runtimeResponse.tool.name,
-        success:               false,
-        durationMs:            0,
-        confidenceAtSelection: 0,
-        executedAt:            Date.now(),
-      },
-    );
+    // M22 — Execution Observer: record failed execution (non-blocking).
+    void executionObserver.observe({
+      scope:                 { tenantId: memoryScope.tenantId, botId: memoryScope.botId },
+      toolName:              runtimeResponse.tool.name,
+      success:               false,
+      durationMs:            (runtimeResponse as any).context.executionTimeMs ?? undefined,
+      confidenceAtSelection: toolIntelResult.confidence,
+      executedAt:            Date.now(),
+    });
 
     req.log.error(
       { error: runtimeResponse.error, tool: runtimeResponse.tool.name },

@@ -61,7 +61,7 @@ export interface ObservationInput {
    * Supplied from M19 ExecutionResult.executionTimeMs.
    * Negative values are clamped to 0 internally.
    */
-  readonly durationMs: number;
+  readonly durationMs?: number;
   /**
    * Confidence score assigned by M20 ToolIntelligenceLayer before execution.
    * Allows M21 to track systematic over/under-confidence in M20's estimates.

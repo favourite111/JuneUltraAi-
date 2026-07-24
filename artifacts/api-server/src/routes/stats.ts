@@ -7,6 +7,7 @@ import { reasonerMetrics } from "../lib/reasoner/index.js";
 import { orchestratorMetrics } from "../lib/orchestrator/index.js";
 import { toolIntelligenceMetrics } from "../lib/tool-intelligence/index.js";
 import { toolLearningMetrics } from "../lib/tool-learning/index.js";
+import { observerMetrics } from "../lib/observer/index.js";
 
 // Injected at build time by esbuild define — no runtime file I/O
 declare const __APP_VERSION__: string;
@@ -35,6 +36,7 @@ router.get("/", async (_req: Request, res: Response) => {
     execution:         orchestratorMetrics.snapshot(),
     tool_intelligence: toolIntelligenceMetrics.snapshot(),
     tool_learning:     toolLearningMetrics.snapshot(),
+    observer:          observerMetrics.snapshot(),
   });
 });
 

@@ -88,7 +88,7 @@ export function createExecutionObserver(config: ExecutionObserverConfig): Execut
         }
 
         // ---- 2. Clamp numeric fields ------------------------------------
-        const durationMs            = Math.max(0, input.durationMs);
+        const durationMs            = input.durationMs !== undefined ? Math.max(0, input.durationMs) : 0;
         const confidenceAtSelection = Math.min(1, Math.max(0, input.confidenceAtSelection));
 
         // ---- 3. Build CompletedToolExecution (M21 contract type) --------
