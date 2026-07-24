@@ -170,6 +170,47 @@ ExecutionObserver.observe(input): Promise<ObservationResult>
 - ✗ Never throws — degrades gracefully on storage failure (same contract as M21 record())
 - ✓ Always returns ObservationResult regardless of storage outcome
 
+**Isolation contract — Observer must never block execution:**
+
+The Observer is telemetry. It is not part of execution success.
+If `observe()` crashes at any point — validation error, storage failure,
+unhandled exception — the user must still receive their response.
+
+```
+Execution succeeds
+        ↓
+Observer crashes internally
+        ↓
+User still gets response   ← must always happen
+```
+
+Implementation rule: every `executionObserver.observe()` call site in `chat.ts`
+must be fire-and-forget (`void`). The Observer itself catches and swallows all
+internal errors, logging them without re-throwing. No `await` on the observer
+in the request-response path.
+
+```typescript
+// Correct call pattern — non-blocking, isolated:
+void executionObserver.observe({ ... });
+
+// Incorrect — must never appear:
+await executionObserver.observe({ ... });   // blocks response
+```
+
+`observe()` must implement this pattern internally:
+
+```typescript
+async observe(input): Promise<ObservationResult> {
+  try {
+    // ... validate, record, return result
+  } catch (err) {
+    // Swallow all errors — log internally, never propagate
+    console.warn("[Observer] Observation failed (non-fatal):", err);
+    return { recorded: false, ... };
+  }
+}
+```
+
 ### 4.4 Singleton
 
 ```typescript
@@ -182,6 +223,44 @@ export const executionObserver = createExecutionObserver({
 
 The singleton is created in `execution-observer.ts` (NOT in `memory-singletons.ts`)
 to avoid circular dependencies. `chat.ts` imports `executionObserver` directly.
+
+### 4.5 ObserverMetrics — strictly counters only
+
+`ObserverMetrics` is a pure telemetry accumulator. It must contain **only**
+count and timing fields. It has no decision-making authority.
+
+**Permitted fields:**
+```typescript
+interface ObserverMetricsSnapshot {
+  readonly observation_calls:    number;   // total observe() invocations
+  readonly observations_recorded: number;  // calls where store.record() succeeded
+  readonly observations_failed:  number;   // calls where recorded=false (any reason)
+  readonly average_duration_ms:  number;   // avg of input.durationMs values received
+}
+```
+
+**Strictly prohibited in ObserverMetrics:**
+- ✗ Tool ranking or scoring
+- ✗ Confidence adjustment or decision thresholds
+- ✗ Any read from ToolLearningStore or ToolLearningReader
+- ✗ Memory reads or writes
+- ✗ Persistence (no StorageProvider calls)
+- ✗ Any logic that influences execution path or tool selection
+
+```
+Observer          ← coordinates the flow
+    ↓
+ObserverMetrics   ← counts only (pure telemetry accumulator)
+    ↓
+ToolLearningStore ← persists outcomes (M21 responsibility)
+```
+
+Not:
+```
+Observer
+    ↓
+Decision engine   ← PROHIBITED — Observer is telemetry, not a controller
+```
 
 ---
 
