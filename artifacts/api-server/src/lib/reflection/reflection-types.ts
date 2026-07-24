@@ -89,6 +89,22 @@ export interface ReflectionResult {
   readonly reflectedAt: number;
 }
 
+/**
+ * M23 — Reflection Layer interface.
+ * Analyzes completed executions to produce structured insights.
+ */
+export interface ReflectionLayer {
+  /**
+   * Analyze one completed tool execution outcome and produce structured insights.
+   *
+   * CALL-SITE RULES:
+   *   1. Call ONLY after execution has been observed.
+   *   2. Always call as `void reflectionLayer.reflect(...)` — never await.
+   *   3. Never use the return value to gate execution or modify the response.
+   */
+  reflect(input: Omit<ExecutionReflectionInput, "reflectionId" | "executionId">): Promise<ReflectionResult>;
+}
+
 // ---------------------------------------------------------------------------
 // Store interface (structural — avoids importing ToolLearningStore class)
 // ---------------------------------------------------------------------------

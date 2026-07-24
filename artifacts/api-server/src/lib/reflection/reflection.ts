@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { analyzeExecution } from "./reflection-rules.js";
 import { failedReflectionResult, makeReflectionResult, successReflectionResult } from "./reflection-result.js";
 import { reflectionMetrics, type ReflectionMetricsRecorder } from "./reflection-metrics.js";
-import type { ExecutionReflectionInput, ReflectionResult } from "./reflection-types.js";
+import type { ExecutionReflectionInput, ReflectionResult, ReflectionLayer } from "./reflection-types.js";
 
 // ---------------------------------------------------------------------------
 // Config
@@ -16,24 +16,7 @@ export interface ReflectionLayerConfig {
   readonly metrics?: ReflectionMetricsRecorder;
 }
 
-// ---------------------------------------------------------------------------
-// Interface
-// ---------------------------------------------------------------------------
-
-export interface ReflectionLayer {
-  /**
-   * Analyze one completed tool execution outcome and produce structured insights.
-   *
-   * CALL-SITE RULES:
-   *   1. Call ONLY after execution has been observed.
-   *   2. Always call as `void reflectionLayer.reflect(...)` — never await.
-   *   3. Never use the return value to gate execution or modify the response.
-   *
-   * This method NEVER throws. All internal failures are caught, logged, and
-   * reflected as `{ analyzed: false }` in the returned ReflectionResult.
-   */
-  reflect(input: Omit<ExecutionReflectionInput, "reflectionId" | "executionId">): Promise<ReflectionResult>;
-}
+// ReflectionLayer interface is now exported from reflection-types.ts
 
 // ---------------------------------------------------------------------------
 // Factory
