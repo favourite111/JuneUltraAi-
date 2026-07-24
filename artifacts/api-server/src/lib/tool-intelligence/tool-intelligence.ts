@@ -25,7 +25,7 @@
 import { ToolRegistry } from "../tools/registry.js";
 import { checkToolAvailability, isToolAvailable } from "./tool-availability.js";
 import { rankTools, selectBestCandidate, selectFallbacks } from "./tool-ranking.js";
-import { estimateCost, estimateLatency } from "./tool-cost.js";
+import { estimateCost, estimateLatency, } from "./tool-cost.js";
 import { detectConflicts, detectUnavailabilityConflict } from "./tool-conflicts.js";
 import {
   makeToolIntelligenceResult,
@@ -35,10 +35,12 @@ import {
   toolIntelligenceMetrics,
   type ToolIntelligenceMetricsRecorder,
 } from "./tool-intelligence-metrics.js";
+import { applyLearningAdjustment } from "./tool-confidence.js";
 import type {
   ToolIntelligenceInput,
   ToolIntelligenceResult,
 } from "./tool-intelligence-types.js";
+import type { ToolLearningReader } from "../tool-learning/tool-learning-types.js";
 
 // ---------------------------------------------------------------------------
 // Public interface
@@ -47,6 +49,14 @@ import type {
 export interface ToolIntelligenceConfig {
   /** Injectable metrics recorder — defaults to the singleton. */
   readonly metrics?: ToolIntelligenceMetricsRecorder;
+  /**
+   * M21 Tool Learning reader. When provided together with a learningScope in
+   * ToolIntelligenceInput, historical success/failure stats from prior
+   * executions are used to apply a bounded (±0.10) confidence adjustment to
+   * the selected tool. Callers that do not supply this field continue to work
+   * unchanged — additive, non-breaking.
+   */
+  readonly learningReader?: ToolLearningReader;
 }
 
 export interface ToolIntelligenceLayer {
@@ -138,6 +148,18 @@ export function createToolIntelligenceLayer(
           warnings.push(
             `Tool "${selectedToolName}" has no manifest — cost and latency estimates are defaults.`,
           );
+        }
+      }
+
+      // ---- M21 learning adjustment (bounded; satisfies N+1 determinism) ----
+      // Reads from ToolLearningReader cache (sync) — reflects only executions
+      // that completed before this request. The current execution's outcome is
+      // not yet recorded, so there is no feedback loop.
+      if (selectedToolName && config.learningReader && input.learningScope) {
+        const lStats = config.learningReader.getStats(input.learningScope, selectedToolName);
+        if (lStats) {
+          const isNominated = !!input.toolName && input.toolName === selectedToolName;
+          confidence = applyLearningAdjustment(confidence, lStats, isNominated);
         }
       }
 

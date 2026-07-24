@@ -49,4 +49,5 @@ export {
   estimateToolConfidence,
   estimatePlannerNominatedConfidence,
   buildCandidate,
+  applyLearningAdjustment,
 } from "./tool-confidence.js";

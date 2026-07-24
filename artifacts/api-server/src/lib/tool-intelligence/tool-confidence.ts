@@ -11,6 +11,8 @@
 
 import { ToolRegistry } from "../tools/registry.js";
 import type { CandidateTool } from "./tool-intelligence-types.js";
+import type { ToolLearningStats } from "../tool-learning/tool-learning-types.js";
+import { MIN_LEARNING_EXECUTIONS } from "../tool-learning/tool-learning-types.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -128,4 +130,63 @@ export function buildCandidate(
     estimatedLatency,
     available,
   });
+}
+
+// ---------------------------------------------------------------------------
+// M21 — Learning-based confidence adjustment
+// ---------------------------------------------------------------------------
+
+/** Bounded confidence boost for reliably-performing tools. */
+const LEARNING_BOOST          = 0.05;
+/** Bounded mild confidence penalty for moderately under-performing tools. */
+const LEARNING_PENALTY_MILD   = 0.05;
+/** Bounded severe confidence penalty for consistently failing tools. */
+const LEARNING_PENALTY_SEVERE = 0.10;
+
+/**
+ * Apply an M21 Tool Learning confidence adjustment to a pre-computed M20 score.
+ *
+ * Adjustment bands (based on historical successRate):
+ *   >= 0.90 → +0.05  (reliable — minor boost)
+ *   >= 0.70 → ±0.00  (neutral — no systematic issue detected)
+ *   >= 0.50 → −0.05  (below average — mild penalty)
+ *   <  0.50 → −0.10  (poor performer — stronger penalty)
+ *
+ * Preconditions:
+ *   - Only applied when stats.totalExecutions >= MIN_LEARNING_EXECUTIONS.
+ *   - When plannerNominated=true, result is floored at PLANNER_NOMINATED_FLOOR
+ *     so Planner authority is preserved even for historically under-performing tools.
+ *   - Result is always clamped to [0.0, 1.0].
+ *   - Synchronous and deterministic — no I/O, no randomness.
+ *
+ * DETERMINISM: stats passed here must reflect only executions that completed
+ * BEFORE the current request (N+1 invariant). The caller (M20 evaluate()) is
+ * responsible for obtaining stats from the ToolLearningReader cache, which
+ * is updated post-execution, never during.
+ */
+export function applyLearningAdjustment(
+  confidence: number,
+  stats: ToolLearningStats,
+  plannerNominated: boolean,
+): number {
+  if (stats.totalExecutions < MIN_LEARNING_EXECUTIONS) {
+    return confidence; // insufficient history — no adjustment
+  }
+
+  let adjustment: number;
+  if (stats.successRate >= 0.90) {
+    adjustment = LEARNING_BOOST;
+  } else if (stats.successRate >= 0.70) {
+    adjustment = 0;
+  } else if (stats.successRate >= 0.50) {
+    adjustment = -LEARNING_PENALTY_MILD;
+  } else {
+    adjustment = -LEARNING_PENALTY_SEVERE;
+  }
+
+  const adjusted = confidence + adjustment;
+  const floored  = plannerNominated
+    ? Math.max(PLANNER_NOMINATED_FLOOR, adjusted) // never undercut Planner authority
+    : adjusted;
+  return Math.min(1.0, Math.max(0.0, floored));
 }

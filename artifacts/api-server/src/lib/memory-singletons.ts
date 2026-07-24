@@ -24,6 +24,7 @@ import {
   StoragePruner,
   VectorStorageProvider,
 } from "./memory/index.js";
+import { ToolLearningStore, toolLearningMetrics } from "./tool-learning/index.js";
 
 // ---------------------------------------------------------------------------
 // Event bus — persistent, shared across all requests
@@ -153,3 +154,24 @@ export function startPrunerScheduler(): void {
   void runPrune();
   setInterval(runPrune, FOUR_HOURS);
 }
+
+// ---------------------------------------------------------------------------
+// Tool Learning store (M21)
+// ---------------------------------------------------------------------------
+
+/**
+ * ToolLearningStore — records completed tool execution outcomes and persists
+ * per-(tenantId, botId, toolName) aggregate stats via the existing
+ * storageProvider (StorageProvider abstraction). No new DB clients or SQL.
+ *
+ * Implements ToolLearningReader so M20 ToolIntelligenceLayer can read
+ * historical stats synchronously and apply bounded confidence adjustments.
+ *
+ * DETERMINISM: record() is called post-execution only. Stats written during
+ * execution N become visible to M20.evaluate() from execution N+1 onward.
+ */
+export const toolLearningStore = new ToolLearningStore(storageProvider, {
+  metrics: toolLearningMetrics,
+});
+
+export { toolLearningMetrics };

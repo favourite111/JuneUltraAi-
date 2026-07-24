@@ -17,6 +17,7 @@ import type {
   ToolError,
 } from "./types.js";
 import type { ReasoningResult } from "../reasoner/reasoner-types.js";
+import type { ToolIntelligenceResult } from "../tool-intelligence/tool-intelligence-types.js";
 
 // ---------------------------------------------------------------------------
 // M19 — Runtime (thin adapter)
@@ -52,6 +53,12 @@ export interface AgentRuntimeRequest extends ExecutionContextInput {
   };
   /** M18 reasoning result — advisory, passed through to the Orchestrator. */
   readonly reasoningResult?: ReasoningResult;
+  /**
+   * M20 Tool Intelligence result — wired directly to OrchestratorInput.toolIntelligence.
+   * When present, the Orchestrator uses toolIntelligence.selectedTool for tool resolution
+   * instead of looking up planner.toolName directly.
+   */
+  readonly toolIntelligenceResult?: ToolIntelligenceResult;
 }
 
 // ---------------------------------------------------------------------------
@@ -148,9 +155,13 @@ export function createDeterministicAgentRuntime(
       });
 
       const result = await orchestrator.execute({
-        prompt:    request.prompt,
-        planner:   plannerInput,
-        reasoning: request.reasoningResult,
+        prompt:           request.prompt,
+        planner:          plannerInput,
+        reasoning:        request.reasoningResult,
+        // M20 — Tool Intelligence result (optional). When present the Orchestrator
+        // uses toolIntelligence.selectedTool for tool resolution; falls back to
+        // planner.toolName when absent (additive, non-breaking).
+        toolIntelligence: request.toolIntelligenceResult,
         context,
         eventBus,
       });

@@ -11,13 +11,14 @@ import {
   type MemoryScope,
   type UserFact as MemoryUserFact,
 } from "../lib/memory/index.js";
-import { memoryManager } from "../lib/memory-singletons.js";
+import { memoryManager, toolLearningStore } from "../lib/memory-singletons.js";
 import { extractKnowledge } from "../lib/memory/knowledge-extractor.js";
 import { scoreFact } from "../lib/memory/confidence-scorer.js";
 import { isSaneFact } from "../lib/memory/memory-sanity-check.js";
 import { analyzeSession } from "../lib/memory/session-analyzer.js";
 import { agentPlanner, type PlanningResult } from "../lib/planner/index.js";
 import { agentReasoner } from "../lib/reasoner/index.js";
+import { toolIntelligenceLayer, noToolResult } from "../lib/tool-intelligence/index.js";
 import { ToolRegistry } from "../lib/tools/registry.js";
 import {
   getOpenTopics,

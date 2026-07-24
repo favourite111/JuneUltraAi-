@@ -81,6 +81,14 @@ export interface ToolIntelligenceInput {
   readonly prompt: string;
   /** Whether the Planner determined a tool is needed at all. */
   readonly needsTool: boolean;
+  /**
+   * M21 scope for Tool Learning reader integration.
+   * When provided alongside ToolIntelligenceConfig.learningReader, the layer
+   * queries historical success/failure stats and applies a bounded confidence
+   * adjustment (±0.10) to the selected tool. The adjustment reflects only
+   * completed prior executions — never the current one (N+1 determinism).
+   */
+  readonly learningScope?: { readonly tenantId: string; readonly botId: string };
 }
 
 // ---------------------------------------------------------------------------
