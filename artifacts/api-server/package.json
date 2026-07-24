@@ -11,19 +11,19 @@
     "test": "vitest run --testTimeout 15000"
   },
   "dependencies": {
-    "@swc/helpers": "^0.5.x",
+    "@swc/helpers": "^0.5.23",
     "@workspace/api-zod": "workspace:*",
     "@workspace/db": "workspace:*",
     "argon2": "^0.44.0",
     "cors": "^2",
     "drizzle-orm": "catalog:",
     "express": "^5",
+    "openai": "^4.0.0",
     "pdfkit": "^0.15.2",
     "pino": "^9",
     "pino-http": "^10",
     "postgres": "^3.4.9",
-    "qrcode": "^1.5.4",
-    "openai": "^4.0.0"
+    "qrcode": "^1.5.4"
   },
   "devDependencies": {
     "@types/cors": "^2.8.19",
