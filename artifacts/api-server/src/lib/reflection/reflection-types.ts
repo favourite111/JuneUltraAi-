@@ -102,7 +102,7 @@ export interface ReflectionLayer {
    *   2. Always call as `void reflectionLayer.reflect(...)` — never await.
    *   3. Never use the return value to gate execution or modify the response.
    */
-  reflect(input: Omit<ExecutionReflectionInput, "reflectionId" | "executionId">): Promise<ReflectionResult>;
+  reflect(input: Omit<ExecutionReflectionInput, "reflectionId">): Promise<ReflectionResult>;
 }
 
 // ---------------------------------------------------------------------------

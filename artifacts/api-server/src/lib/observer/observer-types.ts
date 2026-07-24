@@ -50,6 +50,8 @@ export type ObservationScope = ToolLearningScope;
  *   - confidenceAtSelection: ToolIntelligenceResult.confidence (from M20)
  */
 export interface ObservationInput {
+  /** Unique ID for this specific tool execution attempt. Shared with Reflection. */
+  readonly executionId: string;
   /** (tenantId, botId) that scopes this observation's M21 storage entry. */
   readonly scope: ObservationScope;
   /** Tool name as registered in ToolRegistry. */

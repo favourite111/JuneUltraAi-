@@ -72,6 +72,8 @@ export interface ToolLearningScope {
  *   Calling record() during an in-progress execution violates M21's contract.
  */
 export interface CompletedToolExecution {
+  /** Unique ID for this specific tool execution attempt. */
+  readonly executionId: string;
   /** Tool name as registered in ToolRegistry. */
   readonly toolName: string;
   /** Whether the tool execution succeeded. */

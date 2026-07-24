@@ -14,7 +14,8 @@ describe("M23 — ReflectionLayer", () => {
   });
 
   it("should produce a good quality reflection for a successful, low-latency, high-confidence execution", async () => {
-    const input: Omit<ExecutionReflectionInput, "reflectionId" | "executionId"> = {
+    const input: Omit<ExecutionReflectionInput, "reflectionId"> = {
+      executionId: "test-exec-1",
       scope: { tenantId: "test", botId: "test" },
       toolName: "weather_tool",
       success: true,
@@ -43,7 +44,8 @@ describe("M23 — ReflectionLayer", () => {
   });
 
   it("should produce a poor quality reflection for a failed, high-confidence execution (over-confident failure)", async () => {
-    const input: Omit<ExecutionReflectionInput, "reflectionId" | "executionId"> = {
+    const input: Omit<ExecutionReflectionInput, "reflectionId"> = {
+      executionId: "test-exec-2",
       scope: { tenantId: "test", botId: "test" },
       toolName: "payment_tool",
       success: false,
@@ -71,7 +73,8 @@ describe("M23 — ReflectionLayer", () => {
   });
 
   it("should produce a poor quality reflection for a successful, low-confidence execution (under-confident success)", async () => {
-    const input: Omit<ExecutionReflectionInput, "reflectionId" | "executionId"> = {
+    const input: Omit<ExecutionReflectionInput, "reflectionId"> = {
+      executionId: "test-exec-3",
       scope: { tenantId: "test", botId: "test" },
       toolName: "search_tool",
       success: true,
@@ -98,7 +101,8 @@ describe("M23 — ReflectionLayer", () => {
   });
 
   it("should produce a poor quality reflection for a high-latency execution", async () => {
-    const input: Omit<ExecutionReflectionInput, "reflectionId" | "executionId"> = {
+    const input: Omit<ExecutionReflectionInput, "reflectionId"> = {
+      executionId: "test-exec-4",
       scope: { tenantId: "test", botId: "test" },
       toolName: "data_fetch_tool",
       success: true,
@@ -130,7 +134,8 @@ describe("M23 — ReflectionLayer", () => {
       throw new Error("Simulated analysis error");
     });
 
-    const input: Omit<ExecutionReflectionInput, "reflectionId" | "executionId"> = {
+    const input: Omit<ExecutionReflectionInput, "reflectionId"> = {
+      executionId: "test-exec-5",
       scope: { tenantId: "test", botId: "test" },
       toolName: "any_tool",
       success: true,
@@ -157,7 +162,8 @@ describe("M23 — ReflectionLayer", () => {
   });
 
   it("should ensure ReflectionResult is deep-frozen", async () => {
-    const input: Omit<ExecutionReflectionInput, "reflectionId" | "executionId"> = {
+    const input: Omit<ExecutionReflectionInput, "reflectionId"> = {
+      executionId: "test-exec-6",
       scope: { tenantId: "test", botId: "test" },
       toolName: "test_tool",
       success: true,
@@ -179,12 +185,12 @@ describe("M23 — ReflectionLayer", () => {
   });
 
   it("should correctly map quality and confidenceAlignment to numeric scores for metrics", async () => {
-    const inputs: Array<Omit<ExecutionReflectionInput, "reflectionId" | "executionId"> & { expectedQualityScore: number; expectedConfidenceAlignmentScore: number }> = [
-      { scope: { tenantId: "t1", botId: "b1" }, toolName: "tool1", success: true, durationMs: 100, confidenceAtSelection: 0.9, executedAt: Date.now(), expectedQualityScore: 1, expectedConfidenceAlignmentScore: 1 }, // good, high
-      { scope: { tenantId: "t2", botId: "b2" }, toolName: "tool2", success: false, durationMs: 50, confidenceAtSelection: 0.8, executedAt: Date.now(), expectedQualityScore: -1, expectedConfidenceAlignmentScore: -1 }, // poor, low
-      { scope: { tenantId: "t3", botId: "b3" }, toolName: "tool3", success: true, durationMs: 1200, confidenceAtSelection: 0.7, executedAt: Date.now(), expectedQualityScore: -1, expectedConfidenceAlignmentScore: 0 }, // poor, neutral
-      { scope: { tenantId: "t4", botId: "b4" }, toolName: "tool4", success: true, durationMs: 150, confidenceAtSelection: 0.3, executedAt: Date.now(), expectedQualityScore: -1, expectedConfidenceAlignmentScore: -1 }, // poor, low
-      { scope: { tenantId: "t5", botId: "b5" }, toolName: "tool5", success: false, durationMs: 50, confidenceAtSelection: 0.05, executedAt: Date.now(), expectedQualityScore: -1, expectedConfidenceAlignmentScore: 1 }, // poor, high (expected failure)
+    const inputs: Array<Omit<ExecutionReflectionInput, "reflectionId"> & { expectedQualityScore: number; expectedConfidenceAlignmentScore: number }> = [
+      { executionId: "e1", scope: { tenantId: "t1", botId: "b1" }, toolName: "tool1", success: true, durationMs: 100, confidenceAtSelection: 0.9, executedAt: Date.now(), expectedQualityScore: 1, expectedConfidenceAlignmentScore: 1 }, // good, high
+      { executionId: "e2", scope: { tenantId: "t2", botId: "b2" }, toolName: "tool2", success: false, durationMs: 50, confidenceAtSelection: 0.8, executedAt: Date.now(), expectedQualityScore: -1, expectedConfidenceAlignmentScore: -1 }, // poor, low
+      { executionId: "e3", scope: { tenantId: "t3", botId: "b3" }, toolName: "tool3", success: true, durationMs: 1200, confidenceAtSelection: 0.7, executedAt: Date.now(), expectedQualityScore: -1, expectedConfidenceAlignmentScore: 0 }, // poor, neutral
+      { executionId: "e4", scope: { tenantId: "t4", botId: "b4" }, toolName: "tool4", success: true, durationMs: 150, confidenceAtSelection: 0.3, executedAt: Date.now(), expectedQualityScore: -1, expectedConfidenceAlignmentScore: -1 }, // poor, low
+      { executionId: "e5", scope: { tenantId: "t5", botId: "b5" }, toolName: "tool5", success: false, durationMs: 50, confidenceAtSelection: 0.05, executedAt: Date.now(), expectedQualityScore: -1, expectedConfidenceAlignmentScore: 1 }, // poor, high (expected failure)
     ];
 
     for (const input of inputs) {

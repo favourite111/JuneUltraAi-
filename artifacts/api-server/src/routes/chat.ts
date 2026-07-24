@@ -1026,10 +1026,11 @@ async function handleChat(req: Request, res: Response): Promise<void> {
     // M22 — Execution Observer: post-execution recording (non-blocking).
     // Replaces direct M21 toolLearningStore.record() calls.
     void executionObserver.observe({
+      executionId:           runtimeResponse.executionId,
       scope:                 { tenantId: memoryScope.tenantId, botId: memoryScope.botId },
       toolName:              tool.name,
       success:               true,
-      durationMs:            (runtimeResponse as any).context.executionTimeMs ?? undefined,
+      durationMs:            runtimeResponse.executionTimeMs,
       confidenceAtSelection: toolIntelResult.confidence,
       executedAt:            Date.now(),
     });
@@ -1076,10 +1077,11 @@ async function handleChat(req: Request, res: Response): Promise<void> {
   if (runtimeResponse.status === "failed") {
     // M22 — Execution Observer: record failed execution (non-blocking).
     void executionObserver.observe({
+      executionId:           runtimeResponse.executionId,
       scope:                 { tenantId: memoryScope.tenantId, botId: memoryScope.botId },
       toolName:              runtimeResponse.tool.name,
       success:               false,
-      durationMs:            (runtimeResponse as any).context.executionTimeMs ?? undefined,
+      durationMs:            runtimeResponse.executionTimeMs,
       confidenceAtSelection: toolIntelResult.confidence,
       executedAt:            Date.now(),
     });

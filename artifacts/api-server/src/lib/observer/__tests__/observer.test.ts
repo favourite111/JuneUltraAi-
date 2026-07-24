@@ -24,6 +24,7 @@ function makeStore(overrides: Partial<ObservationStore> = {}): ObservationStore 
 
 function baseInput(overrides: Partial<ObservationInput> = {}): ObservationInput {
   return {
+    executionId:           "exec-1",
     scope:                 { tenantId: "tenant-1", botId: "bot-1" },
     toolName:              "weather",
     success:               true,

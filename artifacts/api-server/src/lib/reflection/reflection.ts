@@ -26,10 +26,9 @@ export function createReflectionLayer(config: ReflectionLayerConfig): Reflection
   const metrics = config.metrics ?? reflectionMetrics;
 
   return {
-    async reflect(input: Omit<ExecutionReflectionInput, "reflectionId" | "executionId">): Promise<ReflectionResult> {
+    async reflect(input: Omit<ExecutionReflectionInput, "reflectionId">): Promise<ReflectionResult> {
       const reflectedAt = Date.now();
       const reflectionId = randomUUID();
-      const executionId = randomUUID(); // Placeholder for now, will be passed from observer later
 
       // ------------------------------------------------------------------
       // ISOLATION: the entire reflect() body is wrapped in a try/catch.
@@ -39,7 +38,6 @@ export function createReflectionLayer(config: ReflectionLayerConfig): Reflection
         // ---- 1. Build full input for analysis ---------------------------
         const fullInput: ExecutionReflectionInput = {
           reflectionId,
-          executionId,
           ...input,
         };
 
@@ -59,7 +57,7 @@ export function createReflectionLayer(config: ReflectionLayerConfig): Reflection
         // ---- 4. Build and return result ---------------------------------
         const result = successReflectionResult({
           reflectionId,
-          executionId,
+          executionId: input.executionId,
           quality: analysis.quality,
           confidenceAlignment: analysis.confidenceAlignment,
           latency: analysis.latency,
@@ -77,7 +75,7 @@ export function createReflectionLayer(config: ReflectionLayerConfig): Reflection
         const message = err instanceof Error ? err.message : String(err);
         console.warn(`[ReflectionLayer] Reflection failed (non-fatal): ${message}`);
 
-        const result = failedReflectionResult({ reflectionId, executionId }, reflectedAt);
+        const result = failedReflectionResult({ reflectionId, executionId: input.executionId }, reflectedAt);
         metrics.record({ analyzed: false });
         return result;
       }

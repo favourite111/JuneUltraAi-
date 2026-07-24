@@ -41,6 +41,7 @@ const SCOPE: ToolLearningScope = { tenantId: "test-tenant", botId: "test-bot" };
 
 function makeExecution(overrides: Partial<CompletedToolExecution> = {}): CompletedToolExecution {
   return {
+    executionId:           "test-exec-id",
     toolName:              "url_shortener",
     success:               true,
     durationMs:            100,
@@ -600,6 +601,7 @@ describe("M21 — Determinism contract", () => {
     // Simulate 5 failed prior executions
     for (let i = 0; i < 5; i++) {
       await store.record(scope, {
+        executionId: "stress-exec-" + i,
         toolName: uniqueId, success: false, durationMs: 50,
         confidenceAtSelection: 0.9, executedAt: Date.now(),
       });

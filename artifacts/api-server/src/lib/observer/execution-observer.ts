@@ -98,6 +98,7 @@ export function createExecutionObserver(config: ExecutionObserverConfig): Execut
 
         // ---- 3. Build CompletedToolExecution (M21 contract type) --------
         const execution = {
+          executionId:          input.executionId,
           toolName:             input.toolName,
           success:              input.success,
           durationMs,
@@ -115,6 +116,7 @@ export function createExecutionObserver(config: ExecutionObserverConfig): Execut
         // ---- 6. M23 — Reflection Layer (post-observation, non-blocking) ---
         if (reflection) {
           void reflection.reflect({
+            executionId:           input.executionId,
             scope:                 input.scope,
             toolName:              input.toolName,
             success:               input.success,

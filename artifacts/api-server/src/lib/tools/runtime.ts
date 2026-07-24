@@ -68,6 +68,10 @@ export interface AgentRuntimeRequest extends ExecutionContextInput {
 export interface CompletedRuntimeResponse {
   readonly status:  "completed";
   readonly context: ExecutionContext;
+  /** Unique ID for this specific tool execution attempt. */
+  readonly executionId: string;
+  /** Total wall-clock time in milliseconds for the entire execution path. */
+  readonly executionTimeMs: number;
   readonly plan:    AgentPlan;
   readonly tool:    Tool;
   readonly result:  ToolResult;
@@ -76,6 +80,10 @@ export interface CompletedRuntimeResponse {
 export interface FailedRuntimeResponse {
   readonly status:  "failed";
   readonly context: ExecutionContext;
+  /** Unique ID for this specific tool execution attempt. */
+  readonly executionId: string;
+  /** Total wall-clock time in milliseconds for the entire execution path. */
+  readonly executionTimeMs: number;
   readonly plan:    AgentPlan;
   readonly tool:    Tool;
   readonly error:   ToolError;
@@ -84,6 +92,8 @@ export interface FailedRuntimeResponse {
 export interface NoCapabilityRuntimeResponse {
   readonly status:  "no_capability";
   readonly context: ExecutionContext;
+  /** Total wall-clock time in milliseconds for the entire execution path. */
+  readonly executionTimeMs: number;
   readonly plan:    AgentPlan;
 }
 
@@ -189,6 +199,8 @@ export function createDeterministicAgentRuntime(
         return {
           status: "failed",
           context,
+          executionId:     context.requestId,
+          executionTimeMs: result.executionTimeMs,
           plan:   minimalPlan,
           tool:   stubTool,
           error: {
@@ -204,6 +216,8 @@ export function createDeterministicAgentRuntime(
           return {
             status: "completed",
             context,
+            executionId:     context.requestId,
+            executionTimeMs: result.executionTimeMs,
             plan:   minimalPlan,
             tool:   result.bridgeTool,
             result: result.bridgeToolResult,
@@ -213,6 +227,8 @@ export function createDeterministicAgentRuntime(
           return {
             status: "failed",
             context,
+            executionId:     context.requestId,
+            executionTimeMs: result.executionTimeMs,
             plan:  minimalPlan,
             tool:  result.bridgeTool,
             error: result.bridgeToolError,
@@ -220,7 +236,12 @@ export function createDeterministicAgentRuntime(
         }
       }
 
-      return { status: "no_capability", context, plan: minimalPlan };
+      return {
+        status:          "no_capability",
+        context,
+        executionTimeMs: result.executionTimeMs,
+        plan:            minimalPlan,
+      };
     },
   };
 }
