@@ -320,7 +320,7 @@ describe("M21 — Storage key addressing", () => {
   it("different tools produce different qualifier keys", async () => {
     await store.record(SCOPE, makeExecution({ toolName: "tool_a" }));
     await store.record(SCOPE, makeExecution({ toolName: "tool_b" }));
-    const base = { tier: TOOL_LEARNING_TIER as const, tenantId: SCOPE.tenantId, botId: SCOPE.botId, userId: TOOL_LEARNING_USER_SENTINEL };
+    const base = { tier: TOOL_LEARNING_TIER, tenantId: SCOPE.tenantId, botId: SCOPE.botId, userId: TOOL_LEARNING_USER_SENTINEL };
     const a = await storage.read<unknown>({ ...base, qualifier: "stats:tool_a" });
     const b = await storage.read<unknown>({ ...base, qualifier: "stats:tool_b" });
     expect(a).not.toBeNull();
@@ -474,6 +474,13 @@ describe("M21 — M20 ToolIntelligenceLayer + learningReader integration", () =>
   const toolId = `m21_integration_tool_${Date.now()}`;
   const mockTool: Tool = {
     name: toolId, description: "M21 integration test tool",
+    // score() returns high confidence for its own name so that it is
+    // deterministically selected by rankTools() even when other legacy tools
+    // (DEFAULT_CONFIDENCE = 0.70) are present in ToolRegistry during the test run.
+    score: (text: string) => ({
+      score: text.includes(toolId.slice(0, 24)) ? 0.95 : 0,
+      reasoning: ["M21 test: scores its own toolId"],
+    }),
     match: () => null,
     execute: async () => ({ type: "text" as const, reply: "", data: {} }),
   };
@@ -515,9 +522,12 @@ describe("M21 — M20 ToolIntelligenceLayer + learningReader integration", () =>
     for (let i = 0; i < MIN_LEARNING_EXECUTIONS + 2; i++) {
       await store.record({ tenantId: "t", botId: "b" }, makeExecution({ toolName: toolId, success: false }));
     }
-    const base  = createToolIntelligenceLayer({}).evaluate({ toolName: toolId, prompt: toolId, needsTool: true });
+    // Use non-nominated path (no toolName) so the learning penalty is not
+    // cancelled by the planner-nominated floor. The planner floor intentionally
+    // protects nominated tools from being undercut — test this via ranking path.
+    const base  = createToolIntelligenceLayer({}).evaluate({ prompt: toolId, needsTool: true });
     const layer = createToolIntelligenceLayer({ learningReader: store });
-    const adj   = layer.evaluate({ toolName: toolId, prompt: toolId, needsTool: true, learningScope: { tenantId: "t", botId: "b" } });
+    const adj   = layer.evaluate({ prompt: toolId, needsTool: true, learningScope: { tenantId: "t", botId: "b" } });
     expect(adj.confidence).toBeLessThan(base.confidence);
   });
 

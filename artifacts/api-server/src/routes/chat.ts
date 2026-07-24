@@ -1008,6 +1008,21 @@ async function handleChat(req: Request, res: Response): Promise<void> {
   if (runtimeResponse.status === "completed") {
     const { result, tool } = runtimeResponse;
     const now = Math.floor(Date.now() / 1000);
+
+    // M21 — post-execution learning record (best-effort, non-blocking).
+    // Determinism contract: record() is called AFTER execution completes.
+    // Stats written here become visible to M20.evaluate() from N+1 onward.
+    void toolLearningStore.record(
+      { tenantId: memoryScope.tenantId, botId: memoryScope.botId },
+      {
+        toolName:              tool.name,
+        success:               true,
+        durationMs:            0, // wall-clock not yet exposed at runtime boundary
+        confidenceAtSelection: 0, // M20 not yet consulted pre-execution in this path
+        executedAt:            Date.now(),
+      },
+    );
+
     const newMessages: Message[] = [
       { role: "user", speaker: userId, content: prompt, ts: now },
       { role: "assistant", speaker: "june", content: result.reply, ts: now },
@@ -1042,6 +1057,18 @@ async function handleChat(req: Request, res: Response): Promise<void> {
   }
 
   if (runtimeResponse.status === "failed") {
+    // M21 — record failed execution (best-effort, non-blocking).
+    void toolLearningStore.record(
+      { tenantId: memoryScope.tenantId, botId: memoryScope.botId },
+      {
+        toolName:              runtimeResponse.tool.name,
+        success:               false,
+        durationMs:            0,
+        confidenceAtSelection: 0,
+        executedAt:            Date.now(),
+      },
+    );
+
     req.log.error(
       { error: runtimeResponse.error, tool: runtimeResponse.tool.name },
       "Tool execution failed",
