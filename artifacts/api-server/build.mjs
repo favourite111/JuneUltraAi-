@@ -62,7 +62,9 @@ async function buildAll() {
       "@prisma/client",
       "@mikro-orm/*",
       "@grpc/*",
-      "@swc/*",
+      // @swc/* intentionally NOT externalized — fontkit (via pdfkit) uses
+      // @swc/helpers decorators at runtime and the Docker image only ships
+      // dist/, so esbuild must bundle @swc/helpers into the output.
       "@aws-sdk/*",
       "@azure/*",
       "@opentelemetry/*",
